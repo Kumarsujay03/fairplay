@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Kumarsujay03/fairplay/internal/auth"
+	"github.com/Kumarsujay03/fairplay/internal/emoji"
 	"github.com/Kumarsujay03/fairplay/internal/hub"
 	"github.com/Kumarsujay03/fairplay/internal/media"
 )
@@ -39,6 +40,7 @@ type Server struct {
 	OnMediaRoot func(path string) // called after the host picks a new folder
 	Firewall    func() any        // firewall that may block Wi-Fi guests, for the console
 	Shutdown    func()            // stops FairPlay; called from the host console
+	Emoji       *emoji.Store      // animated reactions, prepared on first use
 }
 
 func New(a *auth.Store, h *hub.Hub, m *media.Manager, web fs.FS) *Server {
@@ -83,6 +85,8 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET /ws", s.ws)
 	s.mux.HandleFunc("GET /hls/{id}/{file...}", s.hls)
+	s.mux.HandleFunc("GET /api/emoji", s.emojiIndex)
+	s.mux.HandleFunc("GET /emoji/{file}", s.emojiFile)
 }
 
 // ---- middleware ----
@@ -504,6 +508,45 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Hub.Serve(w, r, sess)
+}
+
+func (s *Server) emojiIndex(w http.ResponseWriter, r *http.Request) {
+	if sess, ok := s.session(r); !ok || sess.Status != auth.StatusAdmitted {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Write(emoji.IndexJSON())
+}
+
+// emojiFile serves one animated reaction to people in the room.
+func (s *Server) emojiFile(w http.ResponseWriter, r *http.Request) {
+	if sess, ok := s.session(r); !ok || sess.Status != auth.StatusAdmitted {
+		http.NotFound(w, r)
+		return
+	}
+	code, ok := strings.CutSuffix(r.PathValue("file"), ".webp")
+	if !ok || !emoji.Valid(code) {
+		http.NotFound(w, r)
+		return
+	}
+	b, found := emoji.Bundled(code)
+	var err error
+	if !found {
+		if s.Emoji == nil {
+			http.NotFound(w, r)
+			return
+		}
+		b, err = s.Emoji.Get(r.Context(), code)
+	}
+	if err != nil {
+		http.NotFound(w, r) // the player shows the plain emoji instead
+		return
+	}
+	w.Header().Set("Content-Type", "image/webp")
+	w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+	w.Write(b)
 }
 
 func (s *Server) hls(w http.ResponseWriter, r *http.Request) {

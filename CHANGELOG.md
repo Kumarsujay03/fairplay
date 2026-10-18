@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.3 (2026-10-18)
+
+- Telegram-style animated reactions: every animated Noto emoji (611 of them) in a searchable picker with categories and recents; reactions pop in big with a burst, play their animation and drift up over the chat. The 12 most used are bundled; others are fetched once by the host and cached
+- Viewers can't go ahead of the room: seeking and skipping stop at the room position (no missing chunks, no spoilers); catching up rejoins the room automatically
+- When the browser blocks sound, playback starts muted and in sync with a "tap to unmute" pill, instead of waiting for a tap
+- Picture-in-picture on phones and Safari as well as desktop
+- Chat messages are limited to 200 characters, with a counter
+- Default cache limit raised to 40 GB
+- Fix: after a restart, playing an already prepared video stayed on "Preparing video…"
+- Fix: tapping the seek bar sometimes did nothing
+
 ## 0.1.2 (2026-10-18)
 
 - Reactions now float over the chat instead of under it, with a bouncy pop-in, sway and wobble as they rise

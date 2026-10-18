@@ -89,5 +89,32 @@ export function navigate(path: string) {
   dispatchEvent(new PopStateEvent('popstate'))
 }
 
-export const REACTIONS = ['🔥', '😂', '😭', '👏', '❤️', '🍿']
-export const MORE_REACTIONS = ['🤯', '😮', '👀', '💀', '🙌', '😍']
+// Reactions are animated Noto emoji, sent as codepoints like "1f525".
+export const DEFAULT_REACTIONS = ['1f525', '1f602', '1f62d', '1f44f', '2764_fe0f', '1f37f']
+
+/** "2764_fe0f" → "❤️" */
+export function emojiChar(code: string): string {
+  try {
+    return String.fromCodePoint(...code.split('_').map((h) => parseInt(h, 16)))
+  } catch {
+    return '❓'
+  }
+}
+
+export const emojiURL = (code: string) => `/emoji/${code}.webp`
+
+const RECENT_KEY = 'fp.recentEmoji'
+export function recentEmoji(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]')
+    return Array.isArray(v) ? v.filter((x) => typeof x === 'string').slice(0, 24) : []
+  } catch {
+    return []
+  }
+}
+export function rememberEmoji(code: string) {
+  const list = [code, ...recentEmoji().filter((c) => c !== code)].slice(0, 24)
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list))
+  } catch {}
+}

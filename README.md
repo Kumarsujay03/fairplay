@@ -13,7 +13,7 @@ Watch videos together, perfectly in sync. FairPlay is one small program you run 
 - **Watch solo when you want.** Pause or rewind just for yourself, then tap **Back to live** to rejoin the room.
 - **Intermission.** The host pauses everyone, with a countdown.
 - **Any video file.** MKV, MP4, AVI, HEVC and more are converted by ffmpeg into adaptive quality, up to 1080p. Multiple audio tracks and subtitles are kept, and playback starts while the file is still converting.
-- **Floating chat and emoji reactions** sit over the video. Scroll back through the whole session. The host can hide chat for any viewer.
+- **Floating chat and Telegram-style animated reactions.** Pick from more than 600 animated emoji. Each one pops in with a burst and floats up over the chat. Scroll back through the whole chat session. The host can hide chat for any viewer.
 - **Your language, your quality.** Tracks are named by language. The host picks audio, subtitles and quality for the room, and anyone can switch to their own. Choose 1080p HD, 720p SD or 480p data saver, or Auto, which gives a laptop 1080p and a phone 720p.
 - **Host controls.** A lobby, co-hosts, a playlist, kick, revoke, room lock, and the ping of every viewer.
 - **Private by default.** Each person gets a personal invite link, the host admits every new device, and a bot shield protects the public link.
@@ -83,7 +83,7 @@ Prepared videos are kept so a second showing starts instantly. A full movie take
 | macOS | `~/Library/Caches/fairplay` |
 | Windows | `%LOCALAPPDATA%\fairplay` |
 
-The cache never grows past 20 GB, because the oldest prepared videos are removed first. Change the limit with `-cache-max <GB>`, where `0` means no limit. The host console's Storage card shows what is there and can clear it.
+The cache never grows past 40 GB, because the oldest prepared videos are removed first. Change the limit with `-cache-max <GB>`, where `0` means no limit. The host console's Storage card shows what is there and can clear it.
 
 To see the space used:
 
@@ -184,7 +184,7 @@ The server is the clock. Each browser pings it every 2 seconds and estimates its
 | `-max` | `12` | Maximum guests |
 | `-open` | `true` | Open the host console in your browser on start |
 | `-intermission` | `5` | Default intermission length in minutes. The host can change it in the console |
-| `-cache-max` | `20` | GB of prepared videos to keep. Older ones are removed first. `0` means no limit |
+| `-cache-max` | `40` | GB of prepared videos to keep. Older ones are removed first. `0` means no limit |
 | `-update` | `auto` | `auto`, `check` or `off` |
 | `-auto-admit` | `false` | Admit first-time opens without the lobby. Second devices always need approval |
 | `-ffmpeg`, `-ffprobe`, `-tunnel-bin` | from PATH | Paths to the tools |
@@ -218,4 +218,6 @@ Bug reports, ideas and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBU
 
 ## License
 
-[MIT](LICENSE) © 2026 Sujay Kumar
+[MIT](LICENSE) © 2026 Sujay Kumar.
+
+The animated emoji are [Noto Emoji Animation](https://googlefonts.github.io/noto-emoji-animation/) by Google, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). See [NOTICE](NOTICE) for this and the other third-party credits.

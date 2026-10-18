@@ -21,6 +21,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/Kumarsujay03/fairplay/internal/auth"
+	"github.com/Kumarsujay03/fairplay/internal/emoji"
 	"github.com/Kumarsujay03/fairplay/internal/media"
 	"github.com/Kumarsujay03/fairplay/internal/room"
 )
@@ -92,14 +93,12 @@ type QueueItem struct {
 // maxAudioTracks matches the transcoder's limit.
 const maxAudioTracks = 6
 
+// maxChatRunes caps one chat message, so a wall of text can't swamp the overlay.
+const maxChatRunes = 200
+
 // chatHistory is how many messages a room keeps; late joiners and anyone
 // scrolling back can read them.
 const chatHistory = 200
-
-var allowedReactions = map[string]bool{
-	"🔥": true, "😂": true, "😭": true, "👏": true, "❤️": true, "🍿": true,
-	"🤯": true, "😮": true, "👀": true, "💀": true, "🙌": true, "😍": true,
-}
 
 type Hub struct {
 	auth  *auth.Store
@@ -778,7 +777,7 @@ func (h *Hub) appendChatLocked(m ChatMsg) {
 }
 
 func (h *Hub) onReact(c *client, e string) {
-	if !allowedReactions[e] {
+	if !emoji.Valid(e) {
 		return
 	}
 	h.mu.Lock()
@@ -1051,7 +1050,7 @@ func cleanChat(s string) string {
 	var b strings.Builder
 	n := 0
 	for _, r := range s {
-		if n >= 500 {
+		if n >= maxChatRunes {
 			break
 		}
 		if r == '\n' || r == '\t' {

@@ -332,8 +332,26 @@ func TestFullRoomFlow(t *testing.T) {
 	if cm["m"].(map[string]any)["text"] != "hello <b>room</b>" || cm["m"].(map[string]any)["name"] != "Priya P" {
 		t.Fatalf("chat %v", cm)
 	}
-	gw.send(map[string]any{"t": "react", "e": "🔥"})
-	hw.wait("react", func(m map[string]any) bool { return m["e"] == "🔥" })
+	time.Sleep(1100 * time.Millisecond)
+	gw.send(map[string]any{"t": "chat", "text": strings.Repeat("a", 300)})
+	long := hw.wait("chat", func(m map[string]any) bool { return strings.HasPrefix(m["m"].(map[string]any)["text"].(string), "aaa") })
+	if n := len(long["m"].(map[string]any)["text"].(string)); n != 200 {
+		t.Fatalf("chat messages must be capped at 200 characters, got %d", n)
+	}
+	gw.send(map[string]any{"t": "react", "e": "🔥"}) // raw characters are not emoji codes
+	gw.send(map[string]any{"t": "react", "e": "1f525"})
+	hw.wait("react", func(m map[string]any) bool { return m["e"] == "1f525" })
+	if code, _ := guest.do("GET", "/emoji/1f525.webp", nil, false); code != 200 {
+		t.Fatalf("bundled emoji for guests: %d", code)
+	}
+	for _, p := range []string{"/emoji/zzzz.webp", "/emoji/1f525.png", "/emoji/..%2fx.webp"} {
+		if code, _ := guest.do("GET", p, nil, false); code != 404 {
+			t.Errorf("%s: want 404 got %d", p, code)
+		}
+	}
+	if code, _ := newClient(t, f.srv.URL).do("GET", "/emoji/1f525.webp", nil, false); code != 404 {
+		t.Fatal("outsiders must not fetch emoji")
+	}
 	for i := 0; i < 8; i++ {
 		gw.send(map[string]any{"t": "chat", "text": fmt.Sprint("spam ", i)})
 	}

@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from 'preact/hooks'
 import { chat, settings, you } from '../store'
 import { socket } from '../socket'
 import { Icon } from './Icons'
-import { REACTIONS, MORE_REACTIONS, colorFor } from '../util'
+import { DEFAULT_REACTIONS, colorFor, emojiChar, emojiURL, recentEmoji, rememberEmoji } from '../util'
+import { EmojiPicker } from './EmojiPicker'
 
 const IDLE_FADE_MS = 12000
+export const MAX_CHAT = 200 // characters; the server enforces the same limit
 const NEAR_BOTTOM = 24 // px from the bottom that still counts as "following" the chat
 
 // Floating chat. The panel itself is transparent; only bubbles have a
@@ -76,7 +78,16 @@ export function Chat({ compact = false, open = true }: { compact?: boolean; open
     setText('')
   }
 
-  const react = (emoji: string) => socket.send({ t: 'react', e: emoji })
+  const react = (code: string) => {
+    socket.send({ t: 'react', e: code })
+    rememberEmoji(code)
+    setBar(barEmoji())
+  }
+  const [bar, setBar] = useState(barEmoji)
+  // Warm the browser cache so the first reaction animates instantly.
+  useEffect(() => {
+    for (const c of DEFAULT_REACTIONS) new Image().src = emojiURL(c)
+  }, [])
 
   const chatOn = you.value?.chat !== false
   const shown = chatOn ? msgs : []
@@ -123,7 +134,7 @@ export function Chat({ compact = false, open = true }: { compact?: boolean; open
         <input
           ref={input}
           value={text}
-          maxLength={500}
+          maxLength={MAX_CHAT}
           placeholder="Say something…"
           aria-label="Chat message"
           onInput={(e) => setText((e.target as HTMLInputElement).value)}
@@ -134,6 +145,7 @@ export function Chat({ compact = false, open = true }: { compact?: boolean; open
             if (e.key === 'Escape') (e.target as HTMLInputElement).blur()
           }}
         />
+        {text.length > MAX_CHAT - 40 && <span class={`chat-count ${text.length >= MAX_CHAT ? 'full' : ''}`}>{MAX_CHAT - text.length}</span>}
         <button type="submit" class="send" aria-label="Send" disabled={!text.trim()}>
           <Icon name="send" size={16} />
         </button>
@@ -141,16 +153,41 @@ export function Chat({ compact = false, open = true }: { compact?: boolean; open
       )}
       {settings.value.reactions && (
         <div class="reaction-bar">
-          {(more ? [...REACTIONS, ...MORE_REACTIONS] : REACTIONS).map((e) => (
-            <button key={e} class="chip" onClick={() => react(e)} aria-label={`React ${e}`}>
-              {e}
-            </button>
+          {bar.map((c) => (
+            <Chip key={c} code={c} onClick={() => react(c)} />
           ))}
-          <button class="chip more" onClick={() => setMore(!more)} aria-label="More reactions">
-            {more ? '−' : '+'}
+          <button class={`chip more ${more ? 'on' : ''}`} onClick={() => setMore(!more)} aria-label="All emoji" title="All emoji">
+            {more ? '×' : '+'}
           </button>
+          {more && <EmojiPicker onPick={react} onClose={() => setMore(false)} />}
         </div>
       )}
     </div>
+  )
+}
+
+/** Your 6 most recent reactions, topped up with the defaults. */
+function barEmoji(): string[] {
+  const out: string[] = []
+  for (const c of [...recentEmoji(), ...DEFAULT_REACTIONS]) {
+    if (!out.includes(c)) out.push(c)
+    if (out.length === 6) break
+  }
+  return out
+}
+
+/** A reaction button that plays its animation while hovered. */
+function Chip({ code, onClick }: { code: string; onClick: () => void }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <button
+      class="chip"
+      onClick={onClick}
+      onPointerEnter={() => setHover(true)}
+      onPointerLeave={() => setHover(false)}
+      aria-label={`React ${emojiChar(code)}`}
+    >
+      {hover ? <img src={emojiURL(code)} alt={emojiChar(code)} width={26} height={26} draggable={false} /> : emojiChar(code)}
+    </button>
   )
 }

@@ -26,6 +26,8 @@ export class SyncEngine {
   mode: 'follow' | 'solo' = 'follow'
   blocked = false // autoplay was refused; waiting for a tap
   onBlocked: (b: boolean) => void = () => {}
+  /** Autoplay with sound was refused, so playback started muted instead. */
+  onMutedStart: () => void = () => {}
   onReport: (r: SyncReport) => void = () => {}
 
   private timer = 0
@@ -147,10 +149,16 @@ export class SyncEngine {
     if (!v.paused || this.mode === 'solo') return
     this.own(() => {
       v.play().catch((err: DOMException) => {
-        if (err.name === 'NotAllowedError') {
-          this.blocked = true
-          this.onBlocked(true)
-        }
+        if (err.name !== 'NotAllowedError') return
+        // Browsers refuse sound before the first click on the page (after a
+        // reload, for example). Keep in sync muted, and let the viewer unmute.
+        v.muted = true
+        v.play()
+          .then(() => this.onMutedStart())
+          .catch(() => {
+            this.blocked = true
+            this.onBlocked(true)
+          })
       })
     })
   }

@@ -139,11 +139,26 @@ func TestTranscodeEndToEnd(t *testing.T) {
 	if rec.Code != 404 {
 		t.Error("status.json must not be served")
 	}
-	// A second manager finds the finished encode in the cache.
+	// A second manager (FairPlay restarted) finds the finished encode in the cache.
 	m2, _ := NewManager(ctx, Options{Root: root, Cache: m.cache, FFmpeg: "ffmpeg", FFprobe: "ffprobe"})
 	_, sts, _ := m2.List()
 	if sts[id].State != StateReady {
 		t.Fatalf("cache not reused: %+v", sts[id])
+	}
+	// Regression: playing a cached file after the library was listed must still
+	// announce it as ready, or the room waits on "Preparing video…" forever.
+	got := make(chan Status, 4)
+	m2.OnUpdate = func(st Status) { got <- st }
+	if err := m2.Prepare(id); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case st := <-got:
+		if st.State != StateReady || !st.Playable {
+			t.Fatalf("announced %+v", st)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("a cached file was never announced as ready")
 	}
 }
 

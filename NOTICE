@@ -1,0 +1,17 @@
+FairPlay
+Copyright (c) 2026 Sujay Kumar. Licensed under the MIT License (see LICENSE).
+
+This product includes third-party material:
+
+Animated emoji
+  Noto Emoji Animation by Google
+  https://googlefonts.github.io/noto-emoji-animation/
+  Licensed under the Creative Commons Attribution 4.0 International License (CC BY 4.0)
+  https://creativecommons.org/licenses/by/4.0/
+  Changes: animations are converted from GIF to small animated WebP (96 px, 15 fps).
+  The bundled files are in internal/emoji/default/; others are downloaded and converted
+  by the host's FairPlay on first use.
+
+hls.js (Apache License 2.0) - https://github.com/video-dev/hls.js
+Preact and @preact/signals (MIT) - https://preactjs.com
+coder/websocket (ISC) - https://github.com/coder/websocket

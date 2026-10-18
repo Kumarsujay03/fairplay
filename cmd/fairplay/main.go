@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/Kumarsujay03/fairplay/internal/auth"
+	"github.com/Kumarsujay03/fairplay/internal/emoji"
 	"github.com/Kumarsujay03/fairplay/internal/hub"
 	"github.com/Kumarsujay03/fairplay/internal/media"
 	"github.com/Kumarsujay03/fairplay/internal/server"
@@ -55,7 +56,7 @@ func parseFlags(name string, args []string) options {
 	fs.StringVar(&o.ffmpeg, "ffmpeg", "", "path to ffmpeg (default: search)")
 	fs.StringVar(&o.ffprobe, "ffprobe", "", "path to ffprobe (default: search)")
 	fs.StringVar(&o.cache, "cache", filepath.Join(cacheDir, "fairplay"), "folder for prepared videos (safe to delete)")
-	fs.Float64Var(&o.cacheMaxGB, "cache-max", 20, "keep at most this many GB of prepared videos; older ones are removed (0 = no limit)")
+	fs.Float64Var(&o.cacheMaxGB, "cache-max", 40, "keep at most this many GB of prepared videos; older ones are removed (0 = no limit)")
 	fs.StringVar(&o.data, "data", filepath.Join(cfgDir, "fairplay"), "folder for invites and settings")
 	fs.StringVar(&o.name, "name", "Movie night", "room name guests see")
 	fs.IntVar(&o.maxGuests, "max", 12, "maximum number of guests")
@@ -171,6 +172,7 @@ func start(o options) {
 		log.Printf("freed %.1f GB of older prepared videos (limit %.0f GB, change with -cache-max)", float64(freed)/1e9, o.cacheMaxGB)
 	}
 	srv.Version = version
+	srv.Emoji = emoji.NewStore(filepath.Join(o.cache, "emoji"), ffmpeg)
 	srv.UpdateInfo = updates.info
 	srv.OnMediaRoot = func(p string) {
 		saved.Media = p
