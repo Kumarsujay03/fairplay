@@ -4,6 +4,7 @@ import { socket } from '../socket'
 import * as S from '../store'
 import { Icon, Logo } from '../components/Icons'
 import { LobbyEntry } from '../components/Lobby'
+import { InviteQR } from '../components/QR'
 import { Avatar, peerStatus } from '../components/Peers'
 import { copy, fmtBytes, fmtTime, navigate, pingClass, qualityLabel } from '../util'
 
@@ -794,6 +795,9 @@ function Share({ guests }: { guests: number }) {
           {t!.lan!.map((u) => (
             <span class="mono caption" key={u}>{u}</span>
           ))}
+          <span class="caption muted">
+            Phones: scan an invite’s <strong>QR</strong> code. If you type the address, include the port (<span class="mono">:{new URL(t!.lan![0]).port}</span>), or the browser goes to the wrong place.
+          </span>
         </div>
       )}
       <div class="row wrap caption">
@@ -859,6 +863,15 @@ function Invites({ tokens, setTokens }: { tokens: Record<string, string>; setTok
     S.invites.value = await get<S.InviteView[]>('/api/host/invites')
   }
 
+  const [qrFor, setQrFor] = useState<S.InviteView | null>(null)
+  const qrLinks = (id: string) => {
+    const out: { kind: string; url: string }[] = []
+    if ((t?.lan?.length || 0) > 0) out.push({ kind: 'Wi-Fi', url: linkFor(id, 'lan') })
+    if (t?.state === 'up') out.push({ kind: 'Internet', url: linkFor(id, 'net') })
+    if (!out.length) out.push({ kind: 'This computer', url: `${location.origin}/j/${id}#t=${tokens[id]}` })
+    return out
+  }
+
   const doCopy = async (id: string, kind: 'net' | 'lan') => {
     if (await copy(linkFor(id, kind))) S.showToast('Link copied')
   }
@@ -916,6 +929,9 @@ function Invites({ tokens, setTokens }: { tokens: Record<string, string>; setTok
                       Wi-Fi
                     </button>
                   )}
+                  <button class="btn btn-sm btn-ghost" onClick={() => setQrFor(inv)} title="Show a QR code to scan with a phone">
+                    QR
+                  </button>
                 </>
               )}
               {!inv.revoked && !has && (
@@ -936,6 +952,7 @@ function Invites({ tokens, setTokens }: { tokens: Record<string, string>; setTok
           )
         })}
       </div>
+      {qrFor && <InviteQR label={qrFor.label} links={qrLinks(qrFor.id)} onClose={() => setQrFor(null)} />}
       <div class="caption muted">
         One invite per person. The link carries a 128-bit key, locks to the first device that opens it, and every first join waits for you to
         admit it. Forwarded links show up flagged in the lobby.
