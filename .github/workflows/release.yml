@@ -40,6 +40,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          sh tools/release-notes.sh "$GITHUB_REF_NAME" > notes.md
+          test -s notes.md || { echo "CHANGELOG.md has no section for $GITHUB_REF_NAME"; exit 1; }
           gh release create "$GITHUB_REF_NAME" dist/* \
             --title "FairPlay $GITHUB_REF_NAME" \
+            --notes-file notes.md \
             --generate-notes
