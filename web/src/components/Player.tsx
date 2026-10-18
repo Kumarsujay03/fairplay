@@ -44,6 +44,7 @@ export function Player() {
   const [peersOpen, setPeersOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(true)
   const [showUi, setShowUi] = useState(true)
+  const lastTouch = useRef(0)
   const [isFs, setIsFs] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
   const [inPip, setInPip] = useState(false)
@@ -71,13 +72,27 @@ export function Player() {
     e.onReport = setReport
     e.onBlocked = setBlocked
     e.onMutedStart = () => setSoundOff(true)
+    // Stuck while the room plays: restart loading at the room position, and
+    // rebuild the player if that doesn't help.
+    e.onStall = (n) => {
+      const hls = hlsRef.current
+      if (hls && n <= 2) {
+        hls.stopLoad()
+        if (n === 2) hls.recoverMediaError()
+        hls.startLoad(e.target())
+      } else {
+        setReloadKey((k) => k + 1)
+      }
+    }
     engine.current = e
     e.start()
 
     const onPause = () => {
       setPaused(true)
       // Pauses from outside our UI (media keys, PiP window) count as the user's.
-      if (!e.isOwnAction() && !v.ended && e.mode === 'follow' && S.room.value?.playing) userPause()
+      // Pauses the browser makes on its own (a hidden tab, a stalled or
+      // reloaded stream) don't: they would pause the whole room for a host.
+      if (!e.isOwnAction() && !v.ended && !document.hidden && v.readyState >= 3 && e.mode === 'follow' && S.room.value?.playing) userPause()
     }
     const onPlay = () => setPaused(false)
     const onTime = () => {
@@ -116,6 +131,11 @@ export function Player() {
       if (!on) (screen.orientation as any)?.unlock?.()
     }
     document.addEventListener('fullscreenchange', onFs)
+    // Coming back to a background tab: catch up at once.
+    const onVis = () => {
+      if (!document.hidden) e.tick(true)
+    }
+    document.addEventListener('visibilitychange', onVis)
 
     // Report our status to the room once a second.
     const statusTimer = setInterval(() => sendStatus(), 1000)
@@ -130,6 +150,7 @@ export function Player() {
       v.removeEventListener('leavepictureinpicture', onPipOut)
       mq.removeEventListener('change', onMq)
       document.removeEventListener('fullscreenchange', onFs)
+      document.removeEventListener('visibilitychange', onVis)
     }
   }, [])
 
@@ -499,9 +520,17 @@ export function Player() {
   return (
     <div
       ref={wrap}
-      class={`player ${showUi || paused ? 'ui-on' : 'ui-off'} ${compact ? 'compact' : ''}`}
-      onMouseMove={() => setShowUi(true)}
-      onTouchStart={() => setShowUi(true)}
+      class={`player ${showUi || paused ? 'ui-on' : 'ui-off'} ${compact ? 'compact' : ''} ${chatOpen ? 'chat-on' : ''}`}
+      onMouseMove={() => {
+        // Phones send a fake mouse move with every tap; the tap itself decides.
+        if (performance.now() - lastTouch.current > 800) setShowUi(true)
+      }}
+      onTouchStart={(e) => {
+        lastTouch.current = performance.now()
+        // A tap on the picture toggles the controls (the video's click
+        // handler); a touch anywhere else just keeps them on screen.
+        if (e.target !== videoRef.current) setShowUi(true)
+      }}
     >
       <div class="stage">
         <video
@@ -510,7 +539,7 @@ export function Player() {
           preload="auto"
           disablePictureInPicture={false}
           // On touchscreens a tap shows or hides the controls; with a mouse it plays/pauses.
-          onClick={() => (soundOff ? unmute() : compact || touch ? setShowUi(!showUi) : togglePlay())}
+          onClick={() => (soundOff ? unmute() : compact || touch || performance.now() - lastTouch.current < 800 ? setShowUi((on) => !on) : togglePlay())}
           onDblClick={toggleFs}
         >
           {playable &&
@@ -643,8 +672,9 @@ export function Player() {
               <button class={`icon-btn ${menu ? 'active' : ''}`} onClick={() => setMenu(!menu)} title="Quality, audio, subtitles">
                 <Icon name="settings" />
               </button>
+              {menu && (compact || touch) && <div class="menu-back" onClick={() => setMenu(false)} />}
               {menu && (
-                <div class="menu" onMouseLeave={() => setMenu(false)}>
+                <div class="menu" onMouseLeave={() => !touch && setMenu(false)}>
                   {isHost ? (
                     <div class="menu-note">Your choices apply to everyone. Viewers can still change their own.</div>
                   ) : (

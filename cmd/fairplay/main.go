@@ -88,6 +88,7 @@ Usage:
   fairplay firewall       let guests on your Wi-Fi through this computer's firewall
   fairplay cache          show how much space prepared videos use
   fairplay cache clear    delete prepared videos to free space
+  fairplay stop           end the room and close FairPlay running in another terminal
   fairplay version        print the version
 
 Common options:
@@ -123,6 +124,8 @@ func main() {
 			sub, args = args[0], args[1:]
 		}
 		runCache(sub, parseFlags("fairplay cache", args))
+	case "stop", "quit":
+		runStop(parseFlags("fairplay stop", args))
 	case "version", "--version", "-version":
 		fmt.Println("fairplay", version)
 	case "help", "-h", "--help":
@@ -253,6 +256,8 @@ func start(o options) {
 			}
 		})
 	}
+	writeRunning(o.data, o.port)
+	defer clearRunning(o.data)
 	go func() {
 		if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fail("server stopped: %v", err)

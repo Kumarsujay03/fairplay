@@ -332,7 +332,7 @@ func runCache(sub string, o options) {
 		fmt.Println("Videos are prepared again the next time you play them.")
 	case "clear", "clean":
 		if portBusy(o.port) {
-			fmt.Println("FairPlay is running. Use \"Clear prepared videos\" in the host console instead, or stop FairPlay first.")
+			fmt.Println("FairPlay is running. Use \"Clear prepared videos\" in the host console instead, or run `fairplay stop` first.")
 			os.Exit(1)
 		}
 		if err := os.RemoveAll(o.cache); err != nil {

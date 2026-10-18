@@ -655,7 +655,13 @@ function Playback({ pos }: { pos: number }) {
         <button class="icon-btn" onClick={() => send('seek', { pos: pos - 10 })} title="Back 10s for everyone">
           <Icon name="back10" />
         </button>
-        <button class="big-play sm" onClick={() => send(st?.playing ? 'pause' : 'play')} disabled={!m?.playable}>
+        <button
+          class="big-play sm"
+          onClick={() => send(st?.playing ? 'pause' : 'play')}
+          disabled={!m?.playable}
+          title={st?.playing ? 'Pause for everyone' : 'Play for everyone'}
+          aria-label={st?.playing ? 'Pause for everyone' : 'Play for everyone'}
+        >
           <Icon name={st?.playing ? 'pause' : 'play'} size={22} />
         </button>
         <button class="icon-btn" onClick={() => send('seek', { pos: pos + 10 })} title="Forward 10s for everyone">

@@ -376,6 +376,7 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	master := filepath.Join(dir, "master.m3u8")
 	sc := bufio.NewScanner(stdout)
 	var lastEmit, lastDisk time.Time
+	masterFixed := false
 	for sc.Scan() {
 		k, v, ok := strings.Cut(sc.Text(), "=")
 		if !ok {
@@ -389,6 +390,13 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 			}
 			sec := float64(us) / 1e6
 			playable := sec >= minf(12, info.Duration-0.5) && fileExists(master)
+			if playable && !masterFixed {
+				// Before anyone is told it's playable, so no player sees the wrong numbers.
+				if err := fixMaster(master, rungs); err != nil {
+					log.Printf("media: master playlist for %s: %v", it.RelPath, err)
+				}
+				masterFixed = true
+			}
 			if time.Since(lastEmit) > 700*time.Millisecond {
 				lastEmit = time.Now()
 				var disk int64 = -1
@@ -423,6 +431,9 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 		_ = os.RemoveAll(dir)
 		fail(errors.New(lastLine(msg)))
 		return
+	}
+	if err := fixMaster(master, rungs); err != nil {
+		log.Printf("media: master playlist for %s: %v", it.RelPath, err)
 	}
 	m.update(it.ID, func(s *Status) {
 		s.State, s.Playable, s.Encoded, s.Subs = StateReady, true, info.Duration, subs
@@ -514,6 +525,10 @@ func (m *Manager) loadCachedLocked(it Item) (Status, bool) {
 		return Status{}, false
 	}
 	st.ID, st.Name, st.key = it.ID, it.Name, m.key(it)
+	if st.Original && st.Bitrate > 128 {
+		// Videos prepared by 0.1.5 advertise the copied original far too low.
+		_ = fixMaster(filepath.Join(dir, "master.m3u8"), []rung{{Copy: true, Bitrate: st.Bitrate - 128}})
+	}
 	m.statuses[it.ID] = &st
 	touch(dir)
 	return st, true
