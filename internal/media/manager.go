@@ -115,11 +115,35 @@ func NewManager(ctx context.Context, o Options) (*Manager, error) {
 }
 
 func (m *Manager) EncoderName() string { return m.enc.Name }
-func (m *Manager) Root() string        { return m.realRoot }
+
+// Root is the folder videos are listed from.
+func (m *Manager) Root() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.realRoot
+}
+
+// SetRoot switches the library to another folder. Finished encodes stay in
+// the cache and are found again if the old folder is chosen later.
+func (m *Manager) SetRoot(dir string) error {
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return fmt.Errorf("folder not found: %s", dir)
+	}
+	st, err := os.Stat(real)
+	if err != nil || !st.IsDir() {
+		return fmt.Errorf("not a folder: %s", dir)
+	}
+	m.mu.Lock()
+	m.root, m.realRoot = dir, real
+	m.items = map[string]Item{}
+	m.mu.Unlock()
+	return nil
+}
 
 // List rescans the folder and returns items with their current status.
 func (m *Manager) List() ([]Item, map[string]Status, error) {
-	items, err := scan(m.realRoot)
+	items, err := scan(m.Root())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -356,7 +380,7 @@ func (m *Manager) extractSubs(ctx context.Context, dir string, it Item, info Inf
 			}
 		}
 	}
-	for i, side := range sidecarSubs(m.realRoot, it.abs) {
+	for i, side := range sidecarSubs(m.Root(), it.abs) {
 		id := fmt.Sprintf("ext_%d", i)
 		cmd := exec.CommandContext(ctx, m.ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error", "-y",
 			"-i", side, "-c:s", "webvtt", "-f", "webvtt", id+".vtt")

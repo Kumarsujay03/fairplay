@@ -44,6 +44,14 @@ To test as a guest on one machine, use different hostnames for host and guest, s
 4. Run `gofmt -l .`, `go vet ./...` and `make test` before opening the pull request.
 5. Keep it light. FairPlay idles at about 8 MB of memory, and the app shell is about 26 KB gzipped. Please don't add dependencies without discussing it first.
 
+## Releasing (maintainer)
+
+1. Add the new version to `CHANGELOG.md`.
+2. Tag the release with `git tag -a vX.Y.Z -m vX.Y.Z`.
+3. Push the tag with `git push origin vX.Y.Z`.
+
+The release workflow tests, builds every platform, signs `SHA256SUMS` with the `FAIRPLAY_SIGNING_KEY` secret and publishes the release. Installed copies pick it up on their next start. The private key never leaves the maintainer's machine and the Actions secret. If it is lost, existing installs can no longer auto-update.
+
 ## Project layout
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how the pieces fit together, how sync works, and the security model.

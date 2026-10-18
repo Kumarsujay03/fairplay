@@ -12,3 +12,7 @@ First release.
 - Floating chat with per-viewer hide/show, emoji reactions, viewer list with ping
 - Host console, phone layout, keyboard shortcuts, automatic rejoin after restarts
 - cloudflared and ngrok tunnel supervisor
+- One-line installers for Linux, macOS and Windows that verify checksums and offer to install ffmpeg and cloudflared, with an uninstall mode
+- Signed auto-update on start (`fairplay update` to update now, `-update check|off` to opt out)
+- `fairplay` with no options picks or creates your video folder and opens the host console in the browser; change the folder from the console
+- `fairplay check` to see what FairPlay found, friendlier errors for a missing folder, missing ffmpeg or a busy port

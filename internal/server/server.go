@@ -9,7 +9,9 @@ import (
 	"io/fs"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,6 +33,10 @@ type Server struct {
 	Shield *Shield
 	Web    fs.FS // built frontend (index.html + assets/)
 	mux    *http.ServeMux
+
+	Version     string
+	UpdateInfo  func() any        // current update status for the host console
+	OnMediaRoot func(path string) // called after the host picks a new folder
 }
 
 func New(a *auth.Store, h *hub.Hub, m *media.Manager, web fs.FS) *Server {
@@ -67,6 +73,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /api/host/invites/{id}", s.host(s.deleteInvite))
 	s.mux.HandleFunc("GET /api/host/library", s.host(s.library))
 	s.mux.HandleFunc("GET /api/host/info", s.host(s.info))
+	s.mux.HandleFunc("GET /api/host/browse", s.host(s.browse))
+	s.mux.HandleFunc("POST /api/host/media", s.host(s.setMedia))
 
 	s.mux.HandleFunc("GET /ws", s.ws)
 	s.mux.HandleFunc("GET /hls/{id}/{file...}", s.hls)
@@ -389,7 +397,58 @@ func (s *Server) library(w http.ResponseWriter, r *http.Request, _ auth.Session)
 }
 
 func (s *Server) info(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-	writeJSON(w, map[string]any{"tunnel": s.Hub.Tunnel(), "encoder": s.Media.EncoderName(), "settings": s.Hub.Settings()})
+	var upd any
+	if s.UpdateInfo != nil {
+		upd = s.UpdateInfo()
+	}
+	writeJSON(w, map[string]any{
+		"tunnel": s.Hub.Tunnel(), "encoder": s.Media.EncoderName(), "settings": s.Hub.Settings(),
+		"version": s.Version, "update": upd, "root": s.Media.Root(),
+	})
+}
+
+// expandHome turns "~/Movies" into an absolute path.
+func expandHome(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "~" || strings.HasPrefix(p, "~/") || strings.HasPrefix(p, `~\`) {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimLeft(p[1:], `/\`))
+		}
+	}
+	return p
+}
+
+func (s *Server) browse(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+	dir := expandHome(r.URL.Query().Get("path"))
+	if dir == "" {
+		dir = s.Media.Root()
+	}
+	l, err := media.Browse(dir)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "cannot open that folder")
+		return
+	}
+	home, _ := os.UserHomeDir()
+	writeJSON(w, map[string]any{"listing": l, "home": home})
+}
+
+func (s *Server) setMedia(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	dir := expandHome(body.Path)
+	if err := s.Media.SetRoot(dir); err != nil {
+		jsonErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.Hub.ClearQueue()
+	if s.OnMediaRoot != nil {
+		s.OnMediaRoot(s.Media.Root())
+	}
+	s.library(w, r, auth.Session{})
 }
 
 // ---- realtime and media ----

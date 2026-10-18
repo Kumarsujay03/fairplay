@@ -1,6 +1,10 @@
 // FairPlay: watch videos together, perfectly in sync.
 //
-//	fairplay -media ~/Movies
+//	fairplay                 start a room (opens the host console in your browser)
+//	fairplay -media ~/Movies start with a specific video folder
+//	fairplay update          install the latest release now
+//	fairplay check           show what FairPlay found on this computer
+//	fairplay version
 package main
 
 import (
@@ -15,6 +19,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,64 +28,149 @@ import (
 	"github.com/Kumarsujay03/fairplay/internal/media"
 	"github.com/Kumarsujay03/fairplay/internal/server"
 	"github.com/Kumarsujay03/fairplay/internal/tunnel"
+	"github.com/Kumarsujay03/fairplay/internal/update"
 	"github.com/Kumarsujay03/fairplay/internal/webui"
 )
 
 var version = "dev"
 
-func main() {
-	home, _ := os.UserHomeDir()
+type options struct {
+	media, tunnel, tunnelBin, ffmpeg, ffprobe, cache, data, name, update string
+	port, maxGuests                                                      int
+	lan, autoAdmit, open                                                 bool
+	mediaSet                                                             bool // -media was given explicitly
+}
+
+func parseFlags(name string, args []string) options {
 	cfgDir, _ := os.UserConfigDir()
 	cacheDir, _ := os.UserCacheDir()
-
-	var (
-		mediaDir  = flag.String("media", filepath.Join(home, "Videos"), "folder with your videos")
-		port      = flag.Int("port", 8321, "port to listen on")
-		lan       = flag.Bool("lan", true, "let devices on your Wi-Fi join directly (false = localhost and tunnel only)")
-		tunnelP   = flag.String("tunnel", "cloudflared", "internet tunnel: cloudflared, ngrok or off")
-		tunnelBin = flag.String("tunnel-bin", "", "path to the tunnel binary (default: look in PATH)")
-		ffmpeg    = flag.String("ffmpeg", "ffmpeg", "path to ffmpeg")
-		ffprobe   = flag.String("ffprobe", "ffprobe", "path to ffprobe")
-		cache     = flag.String("cache", filepath.Join(cacheDir, "fairplay"), "transcode cache folder")
-		dataDir   = flag.String("data", filepath.Join(cfgDir, "fairplay"), "folder for invites")
-		roomName  = flag.String("name", "Movie night", "room name shown to guests")
-		maxGuests = flag.Int("max", 12, "maximum number of guests")
-		autoAdmit = flag.Bool("auto-admit", false, "admit first-time invite opens without the lobby (second devices always need approval)")
-		showVer   = flag.Bool("version", false, "print version and exit")
-	)
-	flag.Parse()
-	if *showVer {
-		fmt.Println("fairplay", version)
-		return
+	var o options
+	fs := flag.NewFlagSet(name, flag.ExitOnError)
+	fs.StringVar(&o.media, "media", "", "folder with your videos (default: your Videos, Movies or Downloads folder)")
+	fs.IntVar(&o.port, "port", 8321, "port to listen on")
+	fs.BoolVar(&o.lan, "lan", true, "let devices on your Wi-Fi join directly (false = this computer and the tunnel only)")
+	fs.StringVar(&o.tunnel, "tunnel", "cloudflared", "internet tunnel: cloudflared, ngrok or off")
+	fs.StringVar(&o.tunnelBin, "tunnel-bin", "", "path to the tunnel program (default: search)")
+	fs.StringVar(&o.ffmpeg, "ffmpeg", "", "path to ffmpeg (default: search)")
+	fs.StringVar(&o.ffprobe, "ffprobe", "", "path to ffprobe (default: search)")
+	fs.StringVar(&o.cache, "cache", filepath.Join(cacheDir, "fairplay"), "folder for prepared videos (safe to delete)")
+	fs.StringVar(&o.data, "data", filepath.Join(cfgDir, "fairplay"), "folder for invites and settings")
+	fs.StringVar(&o.name, "name", "Movie night", "room name guests see")
+	fs.IntVar(&o.maxGuests, "max", 12, "maximum number of guests")
+	fs.BoolVar(&o.autoAdmit, "auto-admit", false, "admit first-time invite opens without the lobby (second devices always need approval)")
+	fs.BoolVar(&o.open, "open", true, "open the host console in your browser on start")
+	fs.StringVar(&o.update, "update", envOr("FAIRPLAY_UPDATE", "auto"), "updates: auto (install on start), check (only tell me) or off")
+	fs.Usage = usage
+	_ = fs.Parse(args)
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "media" {
+			o.mediaSet = true
+		}
+	})
+	if fs.NArg() > 0 {
+		fail("unexpected argument %q. Run `fairplay help` for usage.", fs.Arg(0))
 	}
+	return o
+}
+
+func usage() {
+	fmt.Fprint(os.Stderr, `FairPlay: watch videos together, perfectly in sync.
+
+Usage:
+  fairplay [options]      start a room and open the host console
+  fairplay update         install the latest release now
+  fairplay check          show what FairPlay found on this computer
+  fairplay version        print the version
+
+Common options:
+  -media <folder>         folder with your videos (you can also change it in the host console)
+  -name "Movie night"     room name guests see
+  -tunnel cloudflared     internet sharing: cloudflared, ngrok or off
+  -open=false             don't open the browser
+  -update auto            auto, check or off
+
+All options: fairplay -h
+`)
+}
+
+func main() {
 	log.SetFlags(log.Ltime)
+	args := os.Args[1:]
+	cmd := "start"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		cmd, args = args[0], args[1:]
+	}
+	switch cmd {
+	case "start", "serve", "run":
+		start(parseFlags("fairplay", args))
+	case "update", "upgrade":
+		runUpdate()
+	case "check", "doctor":
+		runCheck(parseFlags("fairplay check", args))
+	case "version", "--version", "-version":
+		fmt.Println("fairplay", version)
+	case "help", "-h", "--help":
+		usage()
+	default:
+		fail("unknown command %q. Run `fairplay help` for usage.", cmd)
+	}
+}
+
+func start(o options) {
+	update.CleanupOld()
+	updates := newUpdateState(o.update)
+	if updates.startupUpdate() {
+		return // replaced by the new version
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := os.MkdirAll(*dataDir, 0o700); err != nil {
-		log.Fatal(err)
+	if err := os.MkdirAll(o.data, 0o700); err != nil {
+		fail("cannot create the settings folder %s: %v", o.data, err)
 	}
-	store, err := auth.NewStore(filepath.Join(*dataDir, "invites.json"))
+	saved := loadSettings(o.data)
+
+	ffmpeg, ffprobe := findTool("ffmpeg", o.ffmpeg), findTool("ffprobe", o.ffprobe)
+	if ffmpeg == "" || ffprobe == "" {
+		failHint("FairPlay needs ffmpeg to prepare videos, and it isn't installed.", installHint("ffmpeg"))
+	}
+
+	root, created, err := chooseMediaFolder(o, saved)
 	if err != nil {
-		log.Fatalf("invites: %v", err)
+		fail("%v", err)
 	}
-	mm, err := media.NewManager(ctx, media.Options{Root: *mediaDir, Cache: *cache, FFmpeg: *ffmpeg, FFprobe: *ffprobe})
+
+	store, err := auth.NewStore(filepath.Join(o.data, "invites.json"))
 	if err != nil {
-		log.Fatal(err)
+		fail("cannot read invites: %v", err)
 	}
-	h := hub.New(store, mm, hub.Settings{
-		RoomName: *roomName, AutoAdmit: *autoAdmit, Reactions: true, MaxGuests: *maxGuests,
-	})
+	mm, err := media.NewManager(ctx, media.Options{Root: root, Cache: o.cache, FFmpeg: ffmpeg, FFprobe: ffprobe})
+	if err != nil {
+		fail("%v", err)
+	}
+	h := hub.New(store, mm, hub.Settings{RoomName: o.name, AutoAdmit: o.autoAdmit, Reactions: true, MaxGuests: o.maxGuests})
 	srv := server.New(store, h, mm, webui.FS())
+	srv.Version = version
+	srv.UpdateInfo = updates.info
+	srv.OnMediaRoot = func(p string) {
+		saved.Media = p
+		if err := saveSettings(o.data, saved); err != nil {
+			log.Printf("could not remember the folder: %v", err)
+		}
+		log.Printf("video folder is now %s", p)
+	}
 
 	bind := "0.0.0.0"
-	if !*lan {
+	if !o.lan {
 		bind = "127.0.0.1"
 	}
-	ln, err := net.Listen("tcp", net.JoinHostPort(bind, strconv.Itoa(*port)))
+	ln, err := net.Listen("tcp", net.JoinHostPort(bind, strconv.Itoa(o.port)))
 	if err != nil {
-		log.Fatalf("listen: %v", err)
+		if isAddrInUse(err) {
+			fail("port %d is already in use. Is FairPlay already running? Close it, or start with -port %d", o.port, o.port+1)
+		}
+		fail("cannot listen on port %d: %v", o.port, err)
 	}
 	httpSrv := &http.Server{
 		Handler:           srv.Handler(),
@@ -93,14 +183,19 @@ func main() {
 	}
 
 	var lanURLs []string
-	if *lan {
+	if o.lan {
 		for _, ip := range lanIPs() {
-			lanURLs = append(lanURLs, fmt.Sprintf("http://%s:%d", ip, *port))
+			lanURLs = append(lanURLs, fmt.Sprintf("http://%s:%d", ip, o.port))
 		}
 	}
-	h.SetTunnel(hub.TunnelInfo{Provider: *tunnelP, State: "starting", LAN: lanURLs})
+	tunnelBin := ""
+	if o.tunnel != "off" {
+		tunnelBin = findTool(o.tunnel, o.tunnelBin)
+	}
+	h.SetTunnel(hub.TunnelInfo{Provider: o.tunnel, State: "starting", LAN: lanURLs})
 
 	go h.Run(ctx)
+	go updates.watch(ctx)
 	go func() {
 		t := time.NewTicker(5 * time.Minute)
 		defer t.Stop()
@@ -113,41 +208,75 @@ func main() {
 			}
 		}
 	}()
-	go tunnel.Run(ctx, *tunnelP, *tunnelBin, *port, func(st tunnel.Status) {
-		h.SetTunnel(hub.TunnelInfo{Provider: st.Provider, State: st.State, URL: st.URL, Error: st.Error, LAN: lanURLs})
-		switch st.State {
-		case "up":
-			log.Printf("internet link ready: %s", st.URL)
-		case "error":
-			log.Printf("tunnel: %s", st.Error)
-		}
-	})
+	if o.tunnel != "off" && tunnelBin == "" {
+		h.SetTunnel(hub.TunnelInfo{Provider: o.tunnel, State: "error",
+			Error: o.tunnel + " is not installed, so only people on your Wi-Fi can join. Install it with: " + installHint(o.tunnel), LAN: lanURLs})
+	} else {
+		go tunnel.Run(ctx, o.tunnel, tunnelBin, o.port, func(st tunnel.Status) {
+			h.SetTunnel(hub.TunnelInfo{Provider: st.Provider, State: st.State, URL: st.URL, Error: st.Error, LAN: lanURLs})
+			switch st.State {
+			case "up":
+				log.Printf("internet link ready: %s", st.URL)
+			case "error":
+				log.Printf("tunnel: %s", st.Error)
+			}
+		})
+	}
 	go func() {
 		if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatal(err)
+			fail("server stopped: %v", err)
 		}
 	}()
 
-	fmt.Printf(`
-  FairPlay %s
-  media    %s
-  encoder  %s
-
-  Host console (keep this link private, it is your password):
-    http://127.0.0.1:%d/host#k=%s
-
-`, version, mm.Root(), mm.EncoderName(), *port, store.HostKey())
-	for _, u := range lanURLs {
-		fmt.Printf("  On your Wi-Fi: %s\n", u)
-	}
-	fmt.Printf("  Internet tunnel: %s (the public link shows up in the host console)\n\n  Ctrl+C to stop. Stopping ends the room for everyone.\n\n", *tunnelP)
+	hostURL := fmt.Sprintf("http://127.0.0.1:%d/host#k=%s", o.port, store.HostKey())
+	opened := o.open && openBrowser(hostURL)
+	printBanner(bannerInfo{
+		hostURL: hostURL, opened: opened, root: mm.Root(), created: created, lan: lanURLs,
+		tunnel: o.tunnel, tunnelMissing: o.tunnel != "off" && tunnelBin == "", encoder: mm.EncoderName(),
+	})
 
 	<-ctx.Done()
-	log.Print("shutting down")
+	fmt.Println()
+	log.Print("stopping FairPlay, the room has ended")
 	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(sctx)
 	mm.Stop()
+}
+
+type bannerInfo struct {
+	hostURL, root, tunnel, encoder string
+	lan                            []string
+	opened, created, tunnelMissing bool
+}
+
+func printBanner(b bannerInfo) {
+	fmt.Printf("\n  FairPlay %s is running.\n\n", version)
+	if b.opened {
+		fmt.Println("  The host console is opening in your browser. If it doesn't, open this link.")
+	} else {
+		fmt.Println("  Open this link to reach the host console.")
+	}
+	fmt.Println("  Keep it private, it works like a password:")
+	fmt.Printf("    %s\n\n", b.hostURL)
+	note := "change it in the host console"
+	if b.created {
+		note = "created for you, put videos here or pick another folder in the host console"
+	}
+	fmt.Printf("  Videos     %s (%s)\n", tildePath(b.root), note)
+	for _, u := range b.lan {
+		fmt.Printf("  Wi-Fi      %s\n", u)
+	}
+	switch {
+	case b.tunnel == "off":
+		fmt.Println("  Internet   off (start without -tunnel off to share beyond your Wi-Fi)")
+	case b.tunnelMissing:
+		fmt.Printf("  Internet   %s is not installed, so only your Wi-Fi can join.\n             Install it with: %s\n", b.tunnel, installHint(b.tunnel))
+	default:
+		fmt.Printf("  Internet   starting %s, the public link appears in the host console\n", b.tunnel)
+	}
+	fmt.Printf("  Encoder    %s\n\n", b.encoder)
+	fmt.Print("  Press Ctrl+C to stop. Stopping ends the room for everyone.\n\n")
 }
 
 func lanIPs() []string {
@@ -167,6 +296,11 @@ func lanIPs() []string {
 		}
 	}
 	return out
+}
+
+func isAddrInUse(err error) bool {
+	return errors.Is(err, syscall.EADDRINUSE) || strings.Contains(strings.ToLower(err.Error()), "address already in use") ||
+		strings.Contains(strings.ToLower(err.Error()), "only one usage of each socket address")
 }
 
 type discard struct{}

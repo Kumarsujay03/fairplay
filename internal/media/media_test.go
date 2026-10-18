@@ -128,3 +128,42 @@ func TestTranscodeEndToEnd(t *testing.T) {
 		t.Fatalf("cache not reused: %+v", sts[id])
 	}
 }
+
+func TestBrowseAndSetRoot(t *testing.T) {
+	root := t.TempDir()
+	os.Mkdir(filepath.Join(root, "Shows"), 0o755)
+	os.Mkdir(filepath.Join(root, ".hidden"), 0o755)
+	os.WriteFile(filepath.Join(root, "a.mkv"), []byte("x"), 0o600)
+	os.WriteFile(filepath.Join(root, "notes.txt"), []byte("x"), 0o600)
+	l, err := Browse(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(l.Dirs) != 1 || l.Dirs[0] != "Shows" || l.Videos != 1 || l.Parent == "" {
+		t.Fatalf("got %+v", l)
+	}
+	if items, err := scan(t.TempDir()); err != nil || items == nil {
+		t.Fatal("an empty folder must list as an empty slice, not nil")
+	}
+	if _, err := Browse(filepath.Join(root, "missing")); err == nil {
+		t.Fatal("missing folder should error")
+	}
+
+	other := t.TempDir()
+	os.WriteFile(filepath.Join(other, "a.mkv"), []byte("x"), 0o600)
+	m := &Manager{items: map[string]Item{}, statuses: map[string]*Status{}}
+	if err := m.SetRoot(root); err != nil {
+		t.Fatal(err)
+	}
+	first, _, _ := m.List()
+	if err := m.SetRoot(other); err != nil {
+		t.Fatal(err)
+	}
+	second, _, _ := m.List()
+	if len(first) != 1 || len(second) != 1 || first[0].ID == second[0].ID {
+		t.Fatal("same file name in two folders must get different IDs")
+	}
+	if err := m.SetRoot(filepath.Join(root, "a.mkv")); err == nil {
+		t.Fatal("a file is not a folder")
+	}
+}

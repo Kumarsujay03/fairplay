@@ -28,6 +28,7 @@ FairPlay runs on the host's own computer and is reachable from the internet thro
 - **Cross-site attacks.** Cookies are HttpOnly and SameSite=Strict. Every write and WebSocket checks `Origin`. A strict Content-Security-Policy with no inline scripts, `frame-ancestors 'none'` and nosniff is applied everywhere.
 - **Chat injection.** Names and messages are cleaned and always rendered as text.
 - **Reading other files.** Media is served only from the chosen folder. Symlinks must resolve inside it, and HLS requests must match the exact file names ffmpeg produces. Guests can reach only the video the room is currently showing.
+- **Tampered updates.** Auto-update installs a release only when its `SHA256SUMS` carries a valid Ed25519 signature from the release key built into the app, and the download matches that checksum. A changed binary, a forged checksum file or a compromised download host is refused. Builds from source never auto-update.
 - **Abuse by an admitted guest.** Chat and reactions are rate limited, and the host can hide chat for that viewer, kick them or revoke their link. Only the host and co-hosts the host chose can control playback.
 
 **Out of scope**
@@ -37,4 +38,5 @@ FairPlay runs on the host's own computer and is reachable from the internet thro
 - **A host who admits the wrong person.** Check the name, device and IP in the lobby before admitting.
 - **Tunnel provider attacks.** The tunnel provider (Cloudflare or ngrok) terminates TLS and can see traffic.
 - **Large-scale DoS.** A large-scale denial of service against the tunnel URL is beyond what a home connection can absorb. Rate limits and bans only reduce the cost of small-scale abuse.
+- **The release signing key.** Theft of the key itself is out of scope. It is held by the maintainer and stored as a GitHub Actions secret.
 - **Wi-Fi traffic.** Guests joining over Wi-Fi use plain HTTP. Someone who controls the local network could read or alter that traffic. Use the tunnel link on networks you don't trust.

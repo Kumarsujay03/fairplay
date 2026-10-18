@@ -342,6 +342,14 @@ func (h *Hub) Kick(sids []string, reason string) {
 	h.mu.Unlock()
 }
 
+// ClearQueue empties the playlist, for example after the media folder changed.
+func (h *Hub) ClearQueue() {
+	h.mu.Lock()
+	h.queue = nil
+	h.broadcastQueueLocked()
+	h.mu.Unlock()
+}
+
 func (h *Hub) SetTunnel(t TunnelInfo) {
 	h.mu.Lock()
 	h.tunnel = t
