@@ -41,7 +41,7 @@ func scan(root string) ([]Item, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []Item
+	out := []Item{} // never nil, so an empty folder is [] in JSON
 	err = filepath.WalkDir(realRoot, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // unreadable entries are skipped, not fatal
@@ -65,7 +65,7 @@ func scan(root string) ([]Item, error) {
 			return nil
 		}
 		out = append(out, Item{
-			ID: idFor(rel), Name: prettyName(d.Name()), RelPath: filepath.ToSlash(rel),
+			ID: idFor(realRoot, rel), Name: prettyName(d.Name()), RelPath: filepath.ToSlash(rel),
 			Size: st.Size(), ModTime: st.ModTime(), abs: abs,
 		})
 		return nil
@@ -111,14 +111,64 @@ func sidecarSubs(realRoot, video string) []string {
 	return out
 }
 
-func idFor(rel string) string {
-	h := sha1.Sum([]byte(filepath.ToSlash(rel)))
+// idFor is stable for a file within a folder and differs between folders.
+func idFor(root, rel string) string {
+	h := sha1.Sum([]byte(root + "\x00" + filepath.ToSlash(rel)))
 	return hex.EncodeToString(h[:6])
+}
+
+// IsVideo reports whether a file name looks like a video FairPlay can read.
+func IsVideo(name string) bool { return videoExt[strings.ToLower(filepath.Ext(name))] }
+
+// Listing is one folder in the host's folder picker.
+type Listing struct {
+	Path   string   `json:"path"`
+	Parent string   `json:"parent,omitempty"`
+	Dirs   []string `json:"dirs"`
+	Videos int      `json:"videos"` // video files directly inside this folder
+}
+
+// Browse lists the sub-folders of dir for the host's folder picker. Hidden
+// folders are skipped. Only the host can call this.
+func Browse(dir string) (Listing, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return Listing{}, err
+	}
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		return Listing{}, err
+	}
+	l := Listing{Path: abs, Dirs: []string{}}
+	if p := filepath.Dir(abs); p != abs {
+		l.Parent = p
+	}
+	for _, e := range entries {
+		n := e.Name()
+		if strings.HasPrefix(n, ".") {
+			continue
+		}
+		isDir := e.IsDir()
+		if e.Type()&os.ModeSymlink != 0 {
+			if st, err := os.Stat(filepath.Join(abs, n)); err == nil {
+				isDir = st.IsDir()
+			}
+		}
+		if isDir {
+			if len(l.Dirs) < 500 {
+				l.Dirs = append(l.Dirs, n)
+			}
+		} else if IsVideo(n) {
+			l.Videos++
+		}
+	}
+	sort.Slice(l.Dirs, func(i, j int) bool { return strings.ToLower(l.Dirs[i]) < strings.ToLower(l.Dirs[j]) })
+	return l, nil
 }
 
 func cacheKey(it Item) string {
 	h := sha1.New()
-	h.Write([]byte(it.RelPath))
+	h.Write([]byte(it.abs))
 	h.Write([]byte{0})
 	h.Write([]byte(it.ModTime.UTC().Format(time.RFC3339Nano)))
 	h.Write([]byte{0})

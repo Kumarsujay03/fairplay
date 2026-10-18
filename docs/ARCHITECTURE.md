@@ -132,7 +132,24 @@ The public tunnel URL is reachable by anyone, so every expensive or secret-check
 - **Quiet surface.** Unknown paths return 404, `robots.txt` disallows everything, and `X-Robots-Tag: noindex` is set. Header-read and idle timeouts stop slow-request attacks.
 - **Real IPs.** `CF-Connecting-IP` and `X-Forwarded-For` are trusted only on loopback connections, which is where the tunnel connects.
 
-## 8. Performance
+## 8. Install and updates
+
+**Installers.** `install.sh` (Linux, macOS) and `install.ps1` (Windows) find the latest release from the `github.com/<repo>/releases/latest` redirect, which has no API rate limit. They download the binary for the OS and CPU, check it against the release's `SHA256SUMS`, and install it for the current user without admin rights. If ffmpeg or cloudflared is missing, they offer to install it with the system package manager, Homebrew, winget, or Cloudflare's own release download. Both have an uninstall mode, with an optional purge of data.
+
+**Releases.** Pushing a `v*` tag runs `.github/workflows/release.yml`. It tests, builds six binaries (Linux, macOS and Windows, each on amd64 and arm64), writes `SHA256SUMS`, signs it with the Ed25519 key in the `FAIRPLAY_SIGNING_KEY` secret, checks the signature against the public key compiled into the app, and publishes the GitHub release.
+
+**Auto-update** lives in `internal/update`. On start, a release build:
+
+1. Checks for a newer tag, with a 4-second timeout. Offline starts are not delayed.
+2. Downloads `SHA256SUMS` and its signature, and verifies the signature with the built-in public key.
+3. Downloads the binary, checks its SHA-256, and swaps it in atomically. A running `.exe` on Windows is renamed aside and cleaned up next start.
+4. Restarts into the new version, with `exec` on Unix or a child process on Windows, before the room opens.
+
+It never installs while a room is running. A long-running host is told about new releases in the console, checked every 6 hours. `-update check` only reports, and `-update off` disables checking.
+
+**First run.** The video folder comes from `-media`, then `$FAIRPLAY_MEDIA`, then the folder last picked in the console (`settings.json`), then the first of `~/Videos`, `~/Movies` and `~/Downloads` that exists. If none does, `~/Videos` is created. The host console opens in the default browser. External tools are found on `PATH` and in common install folders: the binary's own folder, `~/.local/bin`, Homebrew, and winget's links. Missing tools produce the exact install command for the OS.
+
+## 9. Performance
 
 | Measure | Value |
 |---|---|
@@ -145,7 +162,7 @@ The public tunnel URL is reachable by anyone, so every expensive or secret-check
 
 Over the internet every viewer pulls their own stream, so the host's upload speed is the ceiling. The console shows the estimate, and adaptive bitrate keeps weaker viewers watching at lower quality instead of stalling.
 
-## 9. Design
+## 10. Design
 
 The design was made in Figma before any code. The theme is dark cinema: a near-black canvas, a warm amber accent like projector light, green for live, and glass overlays on the video. Design tokens live in `web/src/styles.css` and match the Figma variables. Screens:
 
@@ -157,7 +174,7 @@ The design was made in Figma before any code. The theme is dark cinema: a near-b
 |---|---|
 | ![Host console](screens/host-console.png) | ![Mobile](screens/mobile.png) |
 
-## 10. Status
+## 11. Status
 
 Every phase of the original plan is complete.
 
@@ -170,6 +187,7 @@ Every phase of the original plan is complete.
 | Media: probe, HLS ladder, subtitles, audio tracks, cache | Done. Real-encode test |
 | Tunnel supervisor, host console, playlist | Done. cloudflared checked live |
 | Tests, multi-browser sync, security pass | Done. Race detector clean, staticcheck clean |
+| Installers, signed auto-update, first-run defaults | Done. Update tested end to end against a local release server, including tampered and forged releases |
 
 Known limits:
 - Picture-based subtitles (PGS, VobSub) cannot be shown.

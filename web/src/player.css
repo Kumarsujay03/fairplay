@@ -167,3 +167,8 @@ video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-family: var(--fo
 .link-btn:hover { color: var(--amber); }
 .chat-off { align-self: flex-end; padding: 4px 10px; border-radius: 999px; background: var(--glass); color: var(--text-2); }
 .chat-compact .chat-off { align-self: center; }
+.folder-line { gap: 8px; }
+.folder-picker { padding: 12px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-canvas); gap: 10px; }
+.folder-list { max-height: 240px; overflow: auto; display: flex; flex-direction: column; }
+.folder-row { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; text-align: left; font-size: 14px; }
+.folder-row:hover { background: var(--bg-elevated); }

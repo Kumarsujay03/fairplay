@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Build frontend
+        run: make web
+      - name: Test
+        run: go test -count=1 ./...
+      - name: Build binaries
+        run: ./build.sh "${GITHUB_REF_NAME}"
+      - name: Sign checksums
+        env:
+          FAIRPLAY_SIGNING_KEY: ${{ secrets.FAIRPLAY_SIGNING_KEY }}
+        run: |
+          go run ./tools/release-sign sign dist/SHA256SUMS
+          # sanity check: the signature must verify with the key built into the app
+          go run ./tools/release-sign verify dist/SHA256SUMS
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "FairPlay $GITHUB_REF_NAME" \
+            --generate-notes

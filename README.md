@@ -24,44 +24,95 @@ Watch videos together, perfectly in sync. FairPlay is one small program you run 
 
 ## Install
 
-You need **ffmpeg**. You also need **cloudflared** if you want to share over the internet. Without it, FairPlay still works for guests on your Wi-Fi.
+One command downloads the latest release, checks its checksum, and offers to install ffmpeg and cloudflared if they are missing. No Go, Node or build step is needed.
 
-| OS | ffmpeg | cloudflared |
-|---|---|---|
-| Ubuntu or Debian | `sudo apt install ffmpeg` | [Cloudflare packages](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) |
-| macOS | `brew install ffmpeg` | `brew install cloudflared` |
-| Windows | `winget install Gyan.FFmpeg` | `winget install Cloudflare.cloudflared` |
+**Linux or macOS**
 
-Then build FairPlay. This needs Go 1.23+ and Node.js 20+.
+```bash
+curl -fsSL https://raw.githubusercontent.com/Kumarsujay03/fairplay/main/install.sh | sh
+```
+
+**Windows** (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/Kumarsujay03/fairplay/main/install.ps1 | iex
+```
+
+FairPlay goes into `~/.local/bin` on Linux and macOS, or into `%LOCALAPPDATA%\Programs\FairPlay` on Windows, where it also gets a Start menu entry. Nothing starts at login.
+
+FairPlay uses two other programs:
+
+- **ffmpeg** is required. It prepares the videos.
+- **cloudflared** is optional. It shares the room over the internet. Without it, guests on your Wi-Fi can still join.
+
+## Start
+
+```bash
+fairplay
+```
+
+That's all. FairPlay picks your Videos, Movies or Downloads folder, or creates `~/Videos`, and opens the host console in your browser. Then:
+
+1. Pick a video. It starts preparing right away, and playback can begin after a few seconds. To use another folder, press **Change folder**. FairPlay remembers your choice.
+2. Create an invite for each friend. The link is copied for you to send.
+3. When they open it, admit them from the lobby.
+4. Press play. Everyone starts on the same tick.
+
+The host link printed in the terminal works like a password, so keep it private. Stopping FairPlay with Ctrl+C ends the room. Invites survive a restart, guests whose device was already admitted rejoin by themselves, and your host key changes on every start.
+
+`fairplay check` shows what FairPlay found on your computer, if something doesn't work.
+
+## Updates
+
+FairPlay checks for a new version each time it starts. If there is one, it installs it and restarts into it before opening the room. It never updates during a show. Every update must match a checksum file signed with the FairPlay release key, which is built into the app, so a tampered download is refused.
+
+| Command | What it does |
+|---|---|
+| `fairplay update` | Update right now |
+| `fairplay -update check` | Only tell you a new version exists |
+| `fairplay -update off` | Never check. You can also set `FAIRPLAY_UPDATE=off` |
+
+## Uninstall
+
+**Linux or macOS**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Kumarsujay03/fairplay/main/install.sh | sh -s -- --uninstall
+```
+
+Add `--purge` after `--uninstall` to also delete your invites, settings and prepared videos.
+
+**Windows**
+
+```powershell
+$env:FAIRPLAY_UNINSTALL=1; irm https://raw.githubusercontent.com/Kumarsujay03/fairplay/main/install.ps1 | iex
+```
+
+Set `$env:FAIRPLAY_PURGE=1` as well to delete your data.
+
+## Build from source
+
+This needs Go 1.23+, Node.js 20+ and ffmpeg.
 
 ```bash
 git clone https://github.com/Kumarsujay03/fairplay.git
 ```
 
 ```bash
-cd fairplay && make build
+cd fairplay
 ```
+
+```bash
+make install
+```
+
+`make install` builds FairPlay and copies it to `~/.local/bin`. Run `make uninstall` to remove it. Builds from source report a development version and don't auto-update, so use `git pull && make install` to update them.
 
 On Windows without `make`, build the two parts directly:
 
 ```powershell
-cd web; npm ci; npm run build; cd ..; go build -o bin\fairplay.exe ./cmd/fairplay
+cd web; npm ci; npm run build; cd ..; go build -o fairplay.exe ./cmd/fairplay
 ```
-
-## Use
-
-```bash
-./bin/fairplay -media ~/Movies -name "Movie night"
-```
-
-The terminal prints your **host link**. It works like a password, so keep it private. Open it to reach the host console, then:
-
-1. Pick a video. It starts preparing right away, and playback can begin after a few seconds.
-2. Create an invite for each friend. The link is copied for you to send.
-3. When they open it, admit them from the lobby.
-4. Press play. Everyone starts on the same tick.
-
-Stopping FairPlay with Ctrl+C ends the room. Invites survive a restart, and guests whose device was already admitted rejoin by themselves. Your host key changes on every start.
 
 ## How the invite links stay private
 
@@ -90,12 +141,14 @@ The server is the clock. Each browser pings it every 2 seconds and estimates its
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `-media` | `~/Videos` | Folder with your videos |
+| `-media` | your Videos, Movies or Downloads folder | Folder with your videos. You can also change it in the host console |
 | `-name` | `Movie night` | Room name guests see |
 | `-port` | `8321` | Port |
 | `-tunnel` | `cloudflared` | `cloudflared`, `ngrok` or `off` |
 | `-lan` | `true` | Allow direct Wi-Fi joins. `false` means localhost and tunnel only |
 | `-max` | `12` | Maximum guests |
+| `-open` | `true` | Open the host console in your browser on start |
+| `-update` | `auto` | `auto`, `check` or `off` |
 | `-auto-admit` | `false` | Admit first-time opens without the lobby. Second devices always need approval |
 | `-ffmpeg`, `-ffprobe`, `-tunnel-bin` | from PATH | Paths to the tools |
 | `-cache` | OS cache folder | Where prepared videos are kept. Delete it any time to free space |

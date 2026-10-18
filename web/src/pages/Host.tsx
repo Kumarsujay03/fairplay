@@ -123,24 +123,39 @@ export function Host() {
   return <Console />
 }
 
+interface UpdateInfo {
+  current: string
+  latest: string
+  mode: 'auto' | 'check' | 'off'
+  devBuild: boolean
+  available: boolean
+  error?: string
+}
+
 function Console() {
   const [items, setItems] = useState<Item[]>([])
+  const [root, setRoot] = useState('')
+  const [version, setVersion] = useState('')
+  const [upd, setUpd] = useState<UpdateInfo | null>(null)
   const [tokens, setTokens] = useState(loadTokens)
   const [, tick] = useState(0)
 
   const refreshLibrary = () =>
-    get<{ items: Item[]; status: Record<string, S.MediaStatus> }>('/api/host/library')
+    get<{ items: Item[]; status: Record<string, S.MediaStatus>; root: string }>('/api/host/library')
       .then((r) => {
-        setItems(r.items)
+        setItems(r.items || [])
+        setRoot(r.root)
         S.library.value = { ...r.status, ...S.library.value }
       })
       .catch((e) => S.showToast(e.message, 'error'))
 
   useEffect(() => {
     refreshLibrary()
-    get<{ tunnel: S.Tunnel; settings: S.HostSettings }>('/api/host/info').then((r) => {
+    get<{ tunnel: S.Tunnel; settings: S.HostSettings; version: string; update: UpdateInfo | null }>('/api/host/info').then((r) => {
       S.tunnel.value = r.tunnel
       S.hostSettings.value = r.settings
+      setVersion(r.version)
+      setUpd(r.update)
     })
     const t = setInterval(() => tick((n) => n + 1), 500)
     return () => clearInterval(t)
@@ -157,6 +172,7 @@ function Console() {
       <header class="console-top">
         <Logo />
         <span class="dim">Host console</span>
+        <VersionTag version={version} upd={upd} />
         <span class="grow" />
         <span class="pill tag neutral">
           <Icon name="lock" size={14} /> Host verified
@@ -172,7 +188,17 @@ function Console() {
 
       <main class="console-grid">
         <section class="col gap24">
-          <NowPlaying cur={cur} items={items} onRefresh={refreshLibrary} />
+          <NowPlaying
+            cur={cur}
+            items={items}
+            root={root}
+            onRefresh={refreshLibrary}
+            onFolder={(r) => {
+              setItems(r.items || [])
+              setRoot(r.root)
+              S.library.value = { ...r.status, ...S.library.value }
+            }}
+          />
           <Playback pos={pos} />
           <Share guests={guests.length} />
         </section>
@@ -196,8 +222,124 @@ function Console() {
   )
 }
 
-function NowPlaying({ cur, items, onRefresh }: { cur: S.MediaStatus | null; items: Item[]; onRefresh: () => void }) {
+interface LibraryReply {
+  items: Item[]
+  status: Record<string, S.MediaStatus>
+  root: string
+}
+
+function VersionTag({ version, upd }: { version: string; upd: UpdateInfo | null }) {
+  if (!version) return null
+  if (upd?.available) {
+    const how = upd.mode === 'auto' ? 'installs when you next start FairPlay' : 'run `fairplay update` to install'
+    return (
+      <span class="tag warn" title={how}>
+        {upd.latest} available · {how}
+      </span>
+    )
+  }
+  return (
+    <span class="caption muted" title={upd?.devBuild ? 'Development build, auto-update is off' : `Updates: ${upd?.mode ?? 'auto'}`}>
+      {version}
+      {upd && !upd.devBuild && upd.latest ? ' · up to date' : ''}
+    </span>
+  )
+}
+
+/** Folder picker: browse sub-folders and choose where videos come from. */
+function FolderPicker({ root, onDone, onCancel }: { root: string; onDone: (r: LibraryReply) => void; onCancel: () => void }) {
+  const [path, setPath] = useState(root)
+  const [typed, setTyped] = useState(root)
+  const [listing, setListing] = useState<{ path: string; parent?: string; dirs: string[]; videos: number } | null>(null)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const open = async (p: string) => {
+    setErr('')
+    try {
+      const r = await get<{ listing: { path: string; parent?: string; dirs: string[]; videos: number } }>(
+        `/api/host/browse?path=${encodeURIComponent(p)}`,
+      )
+      setListing(r.listing)
+      setPath(r.listing.path)
+      setTyped(r.listing.path)
+    } catch (e) {
+      setErr((e as Error).message)
+    }
+  }
+  useEffect(() => {
+    open(root)
+  }, [])
+
+  const choose = async () => {
+    setBusy(true)
+    try {
+      onDone(await post<LibraryReply>('/api/host/media', { path }))
+      S.showToast('Video folder changed')
+    } catch (e) {
+      setErr((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const sep = path.includes('\\') && !path.includes('/') ? '\\' : '/'
+  return (
+    <div class="folder-picker col">
+      <form
+        class="row"
+        onSubmit={(e) => {
+          e.preventDefault()
+          open(typed)
+        }}
+      >
+        <input class="input grow mono" value={typed} onInput={(e) => setTyped((e.target as HTMLInputElement).value)} aria-label="Folder path" />
+        <button class="btn btn-ghost btn-sm">Go</button>
+      </form>
+      <div class="folder-list">
+        {listing?.parent && (
+          <button class="folder-row" onClick={() => open(listing.parent!)}>
+            <Icon name="up" size={16} /> Up one folder
+          </button>
+        )}
+        {listing?.dirs.map((d) => (
+          <button class="folder-row" key={d} onClick={() => open(path.replace(/[\\/]$/, '') + sep + d)}>
+            <Icon name="film" size={16} class="muted" /> {d}
+          </button>
+        ))}
+        {listing && listing.dirs.length === 0 && <div class="caption muted pad">No sub-folders here.</div>}
+      </div>
+      {err && <div class="caption warn-text">{err}</div>}
+      <div class="row">
+        <span class="caption dim grow">
+          {listing ? `${listing.videos} video${listing.videos === 1 ? '' : 's'} directly in this folder (sub-folders are included too)` : ''}
+        </span>
+        <button class="btn btn-ghost btn-sm" onClick={onCancel}>
+          Cancel
+        </button>
+        <button class="btn btn-primary btn-sm" onClick={choose} disabled={busy || !listing}>
+          Use this folder
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function NowPlaying({
+  cur,
+  items,
+  root,
+  onRefresh,
+  onFolder,
+}: {
+  cur: S.MediaStatus | null
+  items: Item[]
+  root: string
+  onRefresh: () => void
+  onFolder: (r: LibraryReply) => void
+}) {
   const [filter, setFilter] = useState('')
+  const [picking, setPicking] = useState(false)
   const lib = S.library.value
   const shown = items.filter((i) => i.path.toLowerCase().includes(filter.toLowerCase()))
   const curLive = cur ? lib[cur.id] || cur : null
@@ -235,9 +377,34 @@ function NowPlaying({ cur, items, onRefresh }: { cur: S.MediaStatus | null; item
       )}
 
       <div class="col">
+        <div class="row folder-line">
+          <Icon name="film" size={16} class="muted" />
+          <span class="mono caption ellipsis grow" title={root}>
+            {root || '…'}
+          </span>
+          {!picking && (
+            <button class="btn btn-ghost btn-sm" onClick={() => setPicking(true)}>
+              Change folder
+            </button>
+          )}
+        </div>
+        {picking && (
+          <FolderPicker
+            root={root}
+            onCancel={() => setPicking(false)}
+            onDone={(r) => {
+              setPicking(false)
+              onFolder(r)
+            }}
+          />
+        )}
         <input class="input" placeholder="Search your videos" value={filter} onInput={(e) => setFilter((e.target as HTMLInputElement).value)} />
         <div class="library">
-          {shown.length === 0 && <div class="caption muted pad">No videos found in the media folder.</div>}
+          {shown.length === 0 && (
+            <div class="caption muted pad">
+              {items.length === 0 ? 'No videos in this folder yet. Add some, then press refresh, or choose another folder.' : 'Nothing matches your search.'}
+            </div>
+          )}
           {shown.map((it) => {
             const s = lib[it.id]
             return (
