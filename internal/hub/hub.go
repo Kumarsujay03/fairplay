@@ -35,6 +35,8 @@ type Settings struct {
 	MaxGuests  int    `json:"maxGuests"`
 	// InterMinutes is the default intermission length the host's buttons use.
 	InterMinutes int `json:"interMinutes"`
+	// Versions is how many quality versions are prepared: original, balanced or full.
+	Versions string `json:"versions"`
 }
 
 type TunnelInfo struct {
@@ -131,6 +133,10 @@ type Hub struct {
 func New(a *auth.Store, m *media.Manager, s Settings) *Hub {
 	if s.InterMinutes <= 0 {
 		s.InterMinutes = 5
+	}
+	s.Versions = media.NormalizeVersions(s.Versions)
+	if m != nil {
+		m.SetVersions(s.Versions)
 	}
 	h := &Hub{
 		auth: a, media: m, room: room.New(), settings: s,
@@ -611,6 +617,10 @@ func (h *Hub) onHost(c *client, m inMsg) {
 			ns.InterMinutes = 5
 		}
 		ns.InterMinutes = clampInt(ns.InterMinutes, 1, 120)
+		ns.Versions = media.NormalizeVersions(ns.Versions)
+		if h.media != nil {
+			h.media.SetVersions(ns.Versions)
+		}
 		h.mu.Lock()
 		h.settings = ns
 		h.broadcastLocked(msg{"t": "settings", "settings": h.publicSettingsLocked()})

@@ -68,10 +68,10 @@ export function Reactions() {
           { transform: 'translate(-50%, -50%) scale(1.06)', opacity: 1, offset: 0.23 },
           { transform: 'translate(-50%, -50%) scale(1)', opacity: 1, offset: 0.3 },
           // 2. Hold while the emoji plays, then drift up and fade.
-          { transform: `translate(calc(-50% + ${drift * 0.3}px), calc(-50% - ${rise * 0.15}px)) scale(1)`, opacity: 1, offset: 0.5 },
+          { transform: `translate(calc(-50% + ${drift * 0.25}px), calc(-50% - ${rise * 0.12}px)) scale(1)`, opacity: 1, offset: 0.55 },
           { transform: `translate(calc(-50% + ${drift}px), calc(-50% - ${rise}px)) scale(0.7)`, opacity: 0, offset: 1 },
         ],
-        { duration: 3200, easing: 'cubic-bezier(.25,.8,.35,1)', fill: 'forwards' },
+        { duration: 4300, easing: 'cubic-bezier(.25,.8,.35,1)', fill: 'forwards' },
       )
       anim.onfinish = () => {
         wrap.remove()
@@ -97,7 +97,7 @@ export function Reactions() {
             { transform: `translate(calc(-50% + ${dx * 0.6}px), calc(-50% + ${dy * 0.6}px)) scale(1)`, opacity: 1, offset: 0.35 },
             { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy + 14}px)) scale(0.4) rotate(${dx > 0 ? 40 : -40}deg)`, opacity: 0 },
           ],
-          { duration: 750 + Math.random() * 250, delay: 60, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'forwards' },
+          { duration: 950 + Math.random() * 300, delay: 60, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'forwards' },
         )
         a.onfinish = () => p.remove()
       }

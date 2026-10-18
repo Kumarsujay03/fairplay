@@ -25,7 +25,7 @@ FairPlay is a single binary you run on your own computer. It serves a small web 
 - Personal pause, rewind and ±10 s skips. You drop into **Solo** and see how far behind the room you are.
 - **Back to live** returns you to the room position in one tap.
 - **Intermission**: a global pause with a countdown and a "+5 min" button.
-- Adaptive quality per viewer, with up to three rungs between 1080p and 360p chosen from the source. Bandwidth picks the rung automatically, with a manual override.
+- Adaptive quality per viewer: the original picture when the browser can play it, plus up to two smaller versions chosen by the host. Bandwidth picks the rung automatically, with a manual override.
 - Audio track and subtitle selection. Subtitles come from the file or from a sidecar .srt, .vtt or .ass.
 - Volume, mute, fullscreen, picture-in-picture and keyboard shortcuts.
 - A playlist: queue files, reorder them, and move to the next. When a file ends, the next one loads and plays.
@@ -69,8 +69,8 @@ FairPlay is a single binary you run on your own computer. It serves a small web 
 ### Encoding pipeline
 
 1. **Probe** with ffprobe for streams, codecs, duration, HDR and interlacing.
-2. **Plan** up to three rungs by the picture's long side: 1920, 1280 and 854 px for 1080p, 720p and 480p. A 1920×800 film is therefore 1080p, and portrait videos are classed by their height. Rungs never upscale, and bitrate scales with the picture area. 4K sources top out at 1080p to keep the encoder light.
-3. **Transcode** to fMP4 HLS in 4-second segments. Every rung is encoded with keyframes forced at the same 4-second marks, so quality switches are seamless. Interlaced sources are deinterlaced, and HDR sources are tonemapped to SDR when the ffmpeg build has zscale. Audio becomes stereo AAC, up to six tracks. FairPlay detects NVENC, Quick Sync or VideoToolbox with a test encode and falls back to libx264 `veryfast`. ffmpeg runs at lower priority so the host's own playback stays smooth.
+2. **Plan** the versions by the picture's long side: 1920, 1280 and 854 px for 1080p, 720p and 480p. A 1920×800 film is therefore 1080p, and portrait videos are classed by their height. The top version is the original picture when the browser can play it: H.264, 8-bit 4:2:0, SDR, progressive, square pixels, at most about 1080p and 10 Mbps. Otherwise it is encoded at up to 1080p. The host's versions setting (`-versions`) then adds none, one (720p, the default) or two (720p and 480p) smaller versions. Versions never upscale.
+3. **Transcode** to fMP4 HLS in 4-second segments. A copied original keeps its own keyframes, and the smaller versions are encoded with `-force_key_frames source` so their segments line up exactly and quality switches are seamless; when everything is encoded, keyframes are forced every 4 seconds instead. libx264 uses CRF 21 and up, capped at each version's bitrate, so easy scenes take far less space; hardware encoders get 70% of the cap. Interlaced sources are deinterlaced, and HDR sources are tonemapped to SDR when the ffmpeg build has zscale. AAC stereo audio is copied and anything else becomes stereo AAC, up to six tracks. FairPlay detects NVENC, Quick Sync or VideoToolbox with a test encode and falls back to libx264. ffmpeg runs at lower priority so the host's own playback stays smooth. The console shows an estimate of the final size during the encode and the measured size after it.
 4. **Play while encoding.** ffmpeg writes the master playlist within seconds and grows the variant playlists as it goes. The room can start after about 12 seconds are encoded. If playback catches up to the encoder, the room pauses briefly with the reason shown, then resumes automatically.
 5. **Cache** by file path, size, modification time and ladder version, so a second showing starts instantly and a new ladder prepares files again. The cache is capped at 40 GB by default (`-cache-max`), and the least recently used prepared videos are removed after each finished encode and at start. The video in use and the one still encoding are never removed.
 
@@ -172,7 +172,7 @@ It never installs while a room is running. A long-running host is told about new
 | Binary size | 7 MB, frontend included |
 | Frontend gzipped | 26 KB app plus 5 KB CSS. hls.js (123 KB) loads only on the player page |
 | Per viewer on the server | One goroutine pair and a 256-message send buffer. Segments stream from disk |
-| Transcode, three rungs plus two audio tracks, libx264 | 1.5–2.8× realtime on a 16-thread CPU |
+| Transcode, three encoded rungs plus two audio tracks, libx264 (copying the original is far faster) | 1.5–2.8× realtime on a 16-thread CPU |
 
 Over the internet every viewer pulls their own stream, so the host's upload speed is the ceiling. The console shows the estimate, and adaptive bitrate keeps weaker viewers watching at lower quality instead of stalling.
 

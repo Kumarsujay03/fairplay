@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -64,6 +65,10 @@ type Status struct {
 	Width    int          `json:"width,omitempty"`
 	Height   int          `json:"height,omitempty"`
 	Bitrate  int          `json:"bitrate,omitempty"` // top rung kbps, for the upload estimate
+	Versions string       `json:"versions,omitempty"`
+	Original bool         `json:"original,omitempty"` // top quality is the untouched original picture
+	EstBytes int64        `json:"estBytes,omitempty"` // predicted disk use when finished
+	Disk     int64        `json:"disk,omitempty"`     // disk use so far
 	key      string
 }
 
@@ -74,6 +79,7 @@ type Manager struct {
 	ffprobe        string
 	enc            Encoder
 	tonemap        bool
+	versions       atomic.Value // string: VersionsOriginal, VersionsBalanced or VersionsFull
 
 	mu       sync.Mutex
 	items    map[string]Item
@@ -120,6 +126,34 @@ func NewManager(ctx context.Context, o Options) (*Manager, error) {
 }
 
 func (m *Manager) EncoderName() string { return m.enc.Name }
+
+// Versions is how many quality versions new encodes get.
+func (m *Manager) Versions() string {
+	if v, ok := m.versions.Load().(string); ok {
+		return v
+	}
+	return VersionsBalanced
+}
+
+// SetVersions changes what the next prepared video gets. Prepared videos are
+// kept per setting, so switching back reuses them.
+func (m *Manager) SetVersions(v string) { m.versions.Store(NormalizeVersions(v)) }
+
+// key is the cache folder for an item under the current versions setting.
+func (m *Manager) key(it Item) string { return cacheKey(it, m.Versions()) }
+
+func dirSize(dir string) int64 {
+	var n int64
+	_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if fi, err := d.Info(); err == nil {
+				n += fi.Size()
+			}
+		}
+		return nil
+	})
+	return n
+}
 
 // Root is the folder videos are listed from.
 func (m *Manager) Root() string {
@@ -216,7 +250,7 @@ func (m *Manager) Prepare(id string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	j := &job{id: id, cancel: cancel, done: make(chan struct{})}
 	m.running = j
-	st := &Status{ID: id, Name: it.Name, State: StateProbing, Encoder: m.enc.Name, key: cacheKey(it)}
+	st := &Status{ID: id, Name: it.Name, State: StateProbing, Encoder: m.enc.Name, key: m.key(it)}
 	m.statuses[id] = st
 	m.mu.Unlock()
 
@@ -275,14 +309,16 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 		fail(err)
 		return
 	}
-	dir := filepath.Join(m.cache, cacheKey(it))
+	dir := filepath.Join(m.cache, m.key(it))
 	_ = os.RemoveAll(dir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		fail(err)
 		return
 	}
 
-	args, rungs, audio := buildArgs(it.abs, info, m.enc, m.tonemap)
+	versions := m.Versions()
+	args, rungs, audio := buildArgs(it.abs, info, m.enc, m.tonemap, versions)
+	est := estimateBytes(info, rungs, len(audio))
 	var notes []string
 	if info.Video.HDR && !m.tonemap {
 		notes = append(notes, "HDR source: this ffmpeg has no tonemap filter, colours may look washed out")
@@ -319,6 +355,7 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	m.update(it.ID, func(s *Status) {
 		s.State, s.Duration, s.Rungs, s.Audio, s.Notes = StateEncoding, info.Duration, rn, at, notes
 		s.Width, s.Height, s.Bitrate = info.Video.Width, info.Video.Height, rungs[0].Bitrate+128
+		s.Versions, s.Original, s.EstBytes = versions, rungs[0].Copy, est
 	})
 
 	// Subtitles run alongside the video encode.
@@ -338,7 +375,7 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 
 	master := filepath.Join(dir, "master.m3u8")
 	sc := bufio.NewScanner(stdout)
-	var lastEmit time.Time
+	var lastEmit, lastDisk time.Time
 	for sc.Scan() {
 		k, v, ok := strings.Cut(sc.Text(), "=")
 		if !ok {
@@ -354,7 +391,18 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 			playable := sec >= minf(12, info.Duration-0.5) && fileExists(master)
 			if time.Since(lastEmit) > 700*time.Millisecond {
 				lastEmit = time.Now()
-				m.update(it.ID, func(s *Status) { s.Encoded = sec; s.Playable = s.Playable || playable })
+				var disk int64 = -1
+				if time.Since(lastDisk) > 5*time.Second {
+					lastDisk = time.Now()
+					disk = dirSize(dir)
+				}
+				m.update(it.ID, func(s *Status) {
+					s.Encoded = sec
+					s.Playable = s.Playable || playable
+					if disk >= 0 {
+						s.Disk = disk
+					}
+				})
 			}
 		case "speed":
 			f, _ := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(v), "x"), 64)
@@ -378,6 +426,7 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	}
 	m.update(it.ID, func(s *Status) {
 		s.State, s.Playable, s.Encoded, s.Subs = StateReady, true, info.Duration, subs
+		s.Disk = dirSize(dir)
 	})
 	m.mu.Lock()
 	final := *m.statuses[it.ID]
@@ -452,7 +501,7 @@ func (m *Manager) extractSubs(ctx context.Context, dir string, it Item, info Inf
 }
 
 func (m *Manager) loadCachedLocked(it Item) (Status, bool) {
-	dir := filepath.Join(m.cache, cacheKey(it))
+	dir := filepath.Join(m.cache, m.key(it))
 	if !fileExists(filepath.Join(dir, ".done")) {
 		return Status{}, false
 	}
@@ -464,7 +513,7 @@ func (m *Manager) loadCachedLocked(it Item) (Status, bool) {
 	if json.Unmarshal(b, &st) != nil {
 		return Status{}, false
 	}
-	st.ID, st.Name, st.key = it.ID, it.Name, cacheKey(it)
+	st.ID, st.Name, st.key = it.ID, it.Name, m.key(it)
 	m.statuses[it.ID] = &st
 	touch(dir)
 	return st, true

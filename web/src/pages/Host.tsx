@@ -31,6 +31,12 @@ function saveToken(id: string, token: string) {
   } catch {}
 }
 
+const versionHint: Record<string, string> = {
+  original: 'Smallest on disk, but every viewer needs a connection fast enough for the original.',
+  balanced: 'Best experience: the original for good connections and a 720p copy for weak ones.',
+  full: 'Adds a 480p copy for very slow connections, using a little more disk.',
+}
+
 export function Host() {
   const [phase, setPhase] = useState<'checking' | 'login' | 'in'>('checking')
   const [key, setKey] = useState('')
@@ -503,6 +509,7 @@ function MediaSummary({ m }: { m: S.MediaStatus }) {
           </div>
           <div class="row wrap">
             {m.state === 'ready' && <span class="tag ok"><Icon name="check" size={12} /> Ready</span>}
+            {m.original && <span class="tag ok" title="The original picture is streamed as-is: best quality, no re-encoding">Original quality</span>}
             {m.state === 'encoding' && <span class="tag warn">Encoding {pct.toFixed(0)}% · {m.speed?.toFixed(1)}×</span>}
             {m.state === 'probing' && <span class="tag neutral">Reading file…</span>}
             {m.state === 'error' && <span class="tag bad">Error</span>}
@@ -521,6 +528,11 @@ function MediaSummary({ m }: { m: S.MediaStatus }) {
           <EncoderLead m={m} />
         </>
       )}
+      {(m.estBytes || m.disk) ? (
+        <div class="caption dim">
+          {m.state === 'ready' ? `Uses ${fmtBytes(m.disk || m.estBytes || 0)} on disk` : `About ${fmtBytes(m.estBytes || 0)} on disk when done${m.disk ? ` · ${fmtBytes(m.disk)} so far` : ''}`}
+        </div>
+      ) : null}
       {m.playable && S.media.value?.id === m.id && <RoomTracks m={m} />}
       {m.error && <div class="caption warn-text">{m.error}</div>}
       {m.notes?.map((n) => <div class="caption muted" key={n}>{n}</div>)}
@@ -566,7 +578,7 @@ function RoomTracks({ m }: { m: S.MediaStatus }) {
         <label class="track-pick">
           <span class="caption muted">Quality</span>
           <select class="input select" value={p.quality} onChange={(e) => set({ quality: (e.target as HTMLSelectElement).value })}>
-            <option value="auto">Auto (best per device and connection)</option>
+            <option value="auto">Auto (per device)</option>
             {(m.rungs || []).map((r) => (
               <option key={r} value={r}>
                 {qualityLabel(r)}
@@ -1046,6 +1058,17 @@ function RoomSettings() {
           <span class={`switch ${s[k] ? 'on' : ''}`} />
         </button>
       ))}
+      <label class="col tight">
+        <span class="label dim">Quality versions for new videos</span>
+        <select class="input select" value={s.versions || 'balanced'} onChange={(e) => set({ versions: (e.target as HTMLSelectElement).value as S.HostSettings['versions'] })}>
+          <option value="original">Original only</option>
+          <option value="balanced">Original + 720p (recommended)</option>
+          <option value="full">Original + 720p + 480p</option>
+        </select>
+        <span class="caption muted">
+          {versionHint[s.versions || 'balanced']} The original picture is streamed untouched when the browser can play it (most H.264 files), so quality is the best possible and it takes no extra encoding.
+        </span>
+      </label>
       <label class="row">
         <span class="dim grow">Maximum guests</span>
         <input class="input num" type="number" min={1} max={50} value={s.maxGuests} onChange={(e) => set({ maxGuests: parseInt((e.target as HTMLInputElement).value) || 12 })} />
