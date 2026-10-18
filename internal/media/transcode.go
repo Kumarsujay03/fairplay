@@ -3,8 +3,10 @@ package media
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -336,4 +338,53 @@ func subtitleArgs(input string, subs []SubInfo) ([]string, []SubInfo) {
 		args = append(args, "-map", fmt.Sprintf("0:s:%d", s.Index), "-c:s", "webvtt", "-f", "webvtt", fmt.Sprintf("sub_%d.vtt", s.Index))
 	}
 	return args, keep
+}
+
+var bandwidthRe = regexp.MustCompile(`BANDWIDTH=[0-9]+`)
+
+// fixMaster corrects the BANDWIDTH ffmpeg writes into master.m3u8 when an
+// encode starts. ffmpeg can't know the bitrate of a copied stream yet and
+// advertises only a few hundred kbps for it, which would make players pick
+// qualities on wrong numbers. Peak is taken as 1.5× the average for copies
+// and the encode cap for the rest, plus the stereo AAC track. Values that
+// are already plausible are kept: when the encode finishes ffmpeg rewrites
+// the playlist with measured numbers, which are better than estimates.
+func fixMaster(path string, rungs []rung) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(b), "\n")
+	changed := false
+	for i := 1; i < len(lines); i++ {
+		var n int
+		if _, err := fmt.Sscanf(strings.TrimSpace(lines[i]), "s_v%d/index.m3u8", &n); err != nil || n < 0 || n >= len(rungs) {
+			continue
+		}
+		if !strings.HasPrefix(lines[i-1], "#EXT-X-STREAM-INF:") {
+			continue
+		}
+		kbps := rungs[n].Bitrate
+		if rungs[n].Copy {
+			kbps = kbps * 3 / 2
+		}
+		want := (kbps + 128) * 1000
+		var have int
+		if m := bandwidthRe.FindString(lines[i-1]); m != "" {
+			have, _ = strconv.Atoi(strings.TrimPrefix(m, "BANDWIDTH="))
+		}
+		if have*2 >= want {
+			continue
+		}
+		lines[i-1] = bandwidthRe.ReplaceAllString(lines[i-1], fmt.Sprintf("BANDWIDTH=%d", want))
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }

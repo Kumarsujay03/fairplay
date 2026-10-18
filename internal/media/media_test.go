@@ -382,3 +382,28 @@ func TestOriginalIsCopiedAndAligned(t *testing.T) {
 		t.Fatalf("disk use not reported: %+v", st)
 	}
 }
+
+func TestFixMasterBandwidth(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "master.m3u8")
+	in := "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=140800,RESOLUTION=1920x800,CODECS=\"avc1.640028,mp4a.40.2\",AUDIO=\"group_aud\"\ns_v0/index.m3u8\n\n#EXT-X-STREAM-INF:BANDWIDTH=2422200,RESOLUTION=1280x534\ns_v1/index.m3u8\n"
+	os.WriteFile(p, []byte(in), 0o600)
+	if err := fixMaster(p, []rung{{Name: "1080p", Bitrate: 4000, Copy: true}, {Name: "720p", Bitrate: 2074}}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(p)
+	out := string(b)
+	// The copy is fixed; the encoded rung's number from ffmpeg is plausible and kept.
+	if !strings.Contains(out, "BANDWIDTH=6128000,RESOLUTION=1920x800") || !strings.Contains(out, "BANDWIDTH=2422200,RESOLUTION=1280x534") {
+		t.Fatalf("bandwidth not fixed:\n%s", out)
+	}
+	if !strings.Contains(out, "s_v0/index.m3u8") || !strings.Contains(out, `CODECS="avc1.640028,mp4a.40.2"`) {
+		t.Fatalf("other attributes lost:\n%s", out)
+	}
+	// Measured numbers written by ffmpeg at the end are never replaced.
+	measured := strings.Replace(out, "BANDWIDTH=6128000", "BANDWIDTH=8913534", 1)
+	os.WriteFile(p, []byte(measured), 0o600)
+	fixMaster(p, []rung{{Name: "1080p", Bitrate: 4000, Copy: true}})
+	if b, _ := os.ReadFile(p); string(b) != measured {
+		t.Fatal("measured bandwidth was overwritten")
+	}
+}

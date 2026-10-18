@@ -8,6 +8,11 @@
 //                            time the seek itself takes
 // Tolerance grows with network jitter so a shaky link is not corrected
 // constantly. In solo mode the engine only reports, it never corrects.
+//
+// A watchdog calls onStall when the room is playing but this player has
+// made no progress for a while (a stream that stopped loading, a decoder
+// that hung), so the page can restart loading at the room position instead
+// of sitting on "Buffering" while everyone else moves on.
 
 import type { Clock } from './clock'
 import type { RoomState } from './store'
@@ -15,6 +20,7 @@ import type { RoomState } from './store'
 const TICK = 250
 const HARD = 1.5
 const MAX_NUDGE = 0.05
+const STALL_MS = 6000
 
 export interface SyncReport {
   target: number
@@ -29,6 +35,8 @@ export class SyncEngine {
   /** Autoplay with sound was refused, so playback started muted instead. */
   onMutedStart: () => void = () => {}
   onReport: (r: SyncReport) => void = () => {}
+  /** No progress while the room plays; count says how many times in a row. */
+  onStall: (count: number) => void = () => {}
 
   private timer = 0
   private startTimer = 0
@@ -36,6 +44,11 @@ export class SyncEngine {
   private seekCost = 0.25 // learned seconds a seek takes to resume
   private seekAt = 0
   private nudging = false
+  private playPending = false
+  private autoMuted = false // we muted it to get past the autoplay rules
+  private stallSince = 0
+  private stallCount = 0
+  private lastTime = -1
 
   constructor(
     private video: HTMLVideoElement,
@@ -100,6 +113,7 @@ export class SyncEngine {
     const v = this.video
     const s = this.state()
     const buffering = v.readyState < 3 || v.seeking
+    this.watchdog(s)
     if (!s || !s.media || v.readyState === 0) {
       this.onReport({ target: 0, drift: 0, buffering })
       return
@@ -133,7 +147,10 @@ export class SyncEngine {
     const abs = Math.abs(drift)
     if (abs >= HARD) {
       this.setRate(1)
-      if (performance.now() - this.seekAt > 1000) this.seek(target + this.seekCost)
+      // Let a seek that is still loading finish instead of chasing the room
+      // with a new one every second, which restarts the download each time.
+      const wait = v.seeking || buffering ? 4000 : 1000
+      if (!this.seekAt || performance.now() - this.seekAt > wait) this.seek(target + this.seekCost)
     } else if (abs > tol) {
       // Converge in roughly two seconds.
       this.setRate(1 - Math.max(-MAX_NUDGE, Math.min(MAX_NUDGE, drift / 2)))
@@ -146,21 +163,64 @@ export class SyncEngine {
 
   private play() {
     const v = this.video
-    if (!v.paused || this.mode === 'solo') return
+    if (!v.paused || this.mode === 'solo' || this.playPending) return
+    this.playPending = true
+    const done = () => (this.playPending = false)
+    const started = () => {
+      done()
+      if (this.autoMuted && v.muted) this.onMutedStart()
+      this.autoMuted = false
+    }
+    // Only "not allowed" means the browser refuses. Anything else (a new
+    // source, a seek or a pause interrupting the request) is retried on the
+    // next tick, so a hiccup never leaves the player stuck behind the
+    // "tap to start" screen.
+    const refused = (err: DOMException) => err?.name === 'NotAllowedError'
     this.own(() => {
-      v.play().catch((err: DOMException) => {
-        if (err.name !== 'NotAllowedError') return
-        // Browsers refuse sound before the first click on the page (after a
-        // reload, for example). Keep in sync muted, and let the viewer unmute.
-        v.muted = true
-        v.play()
-          .then(() => this.onMutedStart())
-          .catch(() => {
-            this.blocked = true
-            this.onBlocked(true)
-          })
-      })
+      v.play()
+        .then(started)
+        .catch((err: DOMException) => {
+          done()
+          if (!refused(err)) return
+          if (v.muted) return this.setBlocked()
+          // Browsers refuse sound before the first click on the page (after a
+          // reload, for example). Keep in sync muted, and let the viewer unmute.
+          v.muted = true
+          this.autoMuted = true
+          this.playPending = true
+          v.play()
+            .then(started)
+            .catch((e: DOMException) => {
+              done()
+              if (refused(e)) this.setBlocked()
+            })
+        })
     })
+  }
+
+  private setBlocked() {
+    this.blocked = true
+    this.onBlocked(true)
+  }
+
+  // Progress check, independent of drift: the room is playing, we follow it,
+  // and the playhead hasn't moved for STALL_MS.
+  private watchdog(s: RoomState | null) {
+    const v = this.video
+    const now = performance.now()
+    const active = !!s?.media && s.playing && this.clock.now() >= s.anchor && this.mode === 'follow' && !this.blocked && !document.hidden
+    const moved = Math.abs(v.currentTime - this.lastTime) > 0.05
+    this.lastTime = v.currentTime
+    if (!active || (moved && !v.paused && v.readyState >= 3)) {
+      this.stallSince = 0
+      if (moved) this.stallCount = 0
+      return
+    }
+    if (!this.stallSince) this.stallSince = now
+    if (now - this.stallSince < STALL_MS) return
+    this.stallSince = now
+    this.stallCount++
+    this.onStall(this.stallCount)
   }
 
   private seek(t: number) {

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.6 (2026-10-19)
+
+- Fix: a player could get stuck on "Buffering" behind the "tap to start" screen while the room played on, and stay behind after a refresh. Autoplay retries now only stop when the browser really refuses, and a watchdog restarts loading at the room position when a player stops moving
+- Fix: while a video was still preparing, the original-quality version was advertised at about 140 kbps, so automatic quality chose on wrong numbers. Videos already prepared by 0.1.5 are corrected when they load
+- Fix: on phones a single tap in fullscreen made the controls flicker and close; a tap now shows them and the next tap hides them
+- Phone landscape and fullscreen: the see-through chat is on the right, and the centre messages (waiting, paused, intermission) stay clear of it
+- Phone portrait: the quality, audio and subtitles menu and the "who is watching" list open as a sheet at the bottom of the screen instead of going off its top; tap outside to close
+- A browser that pauses a hidden tab no longer pauses the room for everyone when that tab is the host's, and a tab you come back to catches up at once
+- Hard seeks wait for a slow seek to finish instead of restarting it every second
+- `fairplay stop` ends a room started in another terminal
+
 ## 0.1.5 (2026-10-19)
 
 - Much smaller and better encodes. When the browser can play the original H.264 picture, FairPlay streams it untouched instead of re-encoding it, so the top quality is exactly the source and preparing starts faster. Smaller versions are encoded with quality-based settings capped at a bitrate, keyframes match the original so switching is seamless, and AAC stereo audio is copied. A 1080p film now takes about 1.3–1.5× its file size instead of about 2.3×
