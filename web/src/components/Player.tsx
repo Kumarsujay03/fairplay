@@ -50,8 +50,11 @@ export function Player() {
   const pipSupported =
     (typeof document !== 'undefined' && !!document.pictureInPictureEnabled) ||
     typeof (HTMLVideoElement.prototype as any).webkitSetPresentationMode === 'function'
-  const [compact, setCompact] = useState(() => matchMedia('(max-width: 720px) and (orientation: portrait)').matches)
+  const [portraitPhone, setPortraitPhone] = useState(() => matchMedia('(max-width: 720px) and (orientation: portrait)').matches)
 
+  // Fullscreen always uses the cinema layout (chat floating over the video).
+  const compact = portraitPhone && !isFs
+  const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches
   const st = S.room.value
   const m = S.media.value
   const me = S.you.value
@@ -105,9 +108,13 @@ export function Player() {
     } catch {}
 
     const mq = matchMedia('(max-width: 720px) and (orientation: portrait)')
-    const onMq = () => setCompact(mq.matches)
+    const onMq = () => setPortraitPhone(mq.matches)
     mq.addEventListener('change', onMq)
-    const onFs = () => setIsFs(!!document.fullscreenElement)
+    const onFs = () => {
+      const on = !!document.fullscreenElement
+      setIsFs(on)
+      if (!on) (screen.orientation as any)?.unlock?.()
+    }
     document.addEventListener('fullscreenchange', onFs)
 
     // Report our status to the room once a second.
@@ -406,9 +413,18 @@ export function Player() {
   function toggleFs() {
     const el = wrap.current as any
     const v = videoRef.current as any
-    if (document.fullscreenElement) document.exitFullscreen()
-    else if (el.requestFullscreen) el.requestFullscreen().catch(() => {})
-    else if (v.webkitEnterFullscreen) v.webkitEnterFullscreen()
+    if (document.fullscreenElement) {
+      document.exitFullscreen()
+      return
+    }
+    if (el.requestFullscreen) {
+      el.requestFullscreen({ navigationUI: 'hide' })
+        .then(() => {
+          // Phones: turn sideways for the movie. Desktops reject this, which is fine.
+          if (matchMedia('(pointer: coarse)').matches) (screen.orientation as any)?.lock?.('landscape').catch(() => {})
+        })
+        .catch(() => {})
+    } else if (v.webkitEnterFullscreen) v.webkitEnterFullscreen() // iPhone: the system player
   }
 
   async function togglePip() {
@@ -493,7 +509,8 @@ export function Player() {
           playsInline
           preload="auto"
           disablePictureInPicture={false}
-          onClick={() => (soundOff ? unmute() : compact ? setShowUi(!showUi) : togglePlay())}
+          // On touchscreens a tap shows or hides the controls; with a mouse it plays/pauses.
+          onClick={() => (soundOff ? unmute() : compact || touch ? setShowUi(!showUi) : togglePlay())}
           onDblClick={toggleFs}
         >
           {playable &&

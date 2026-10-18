@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4 (2026-10-18)
+
+- QR code for every invite in the host console: scan it with a phone camera to open the exact link, port included (typing the address without `:8321` sends the browser to the wrong place)
+- Fullscreen on phones turns to landscape and uses the cinema layout: video edge to edge, see-through chat on the left with reactions, the emoji picker and the chat toggle
+- On touchscreens a tap shows or hides the controls instead of pausing
+
 ## 0.1.3 (2026-10-18)
 
 - Telegram-style animated reactions: every animated Noto emoji (611 of them) in a searchable picker with categories and recents; reactions pop in big with a burst, play their animation and drift up over the chat. The 12 most used are bundled; others are fetched once by the host and cached

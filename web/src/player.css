@@ -214,7 +214,7 @@ video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-family: var(--fo
 
 /* ---------- Emoji picker ---------- */
 .chat { position: relative; }
-.emoji-picker { position: absolute; right: 0; bottom: 48px; z-index: 7; width: 320px; max-width: calc(100vw - 32px); display: flex; flex-direction: column; border-radius: var(--r-lg); background: rgba(13, 16, 24, 0.97); border: 1px solid var(--glass-line); box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55); backdrop-filter: blur(14px); overflow: hidden; animation: toast-in 0.15s ease-out; }
+.emoji-picker { position: absolute; right: 0; bottom: 48px; z-index: 7; width: 320px; max-width: calc(100vw - 32px); display: flex; flex-direction: column; border-radius: var(--r-lg); background: rgba(13, 16, 24, 0.97); border: 1px solid var(--glass-line); box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55); backdrop-filter: blur(14px); overflow: hidden; animation: pop-in 0.15s ease-out; }
 .emoji-head { display: flex; align-items: center; gap: 8px; padding: 10px 10px 6px; }
 .emoji-search { flex: 1; min-width: 0; padding: 8px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-surface); outline: none; font-size: 14px; }
 .emoji-search:focus { border-color: var(--amber); }
@@ -236,3 +236,40 @@ video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-family: var(--fo
 .player.compact .control-row { gap: 4px; }
 .player.compact .control-row .icon-btn { width: 32px; height: 32px; }
 .player.compact .live-toggle { padding: 6px 9px; gap: 4px; }
+/* QR invite modal */
+.modal-back { position: fixed; inset: 0; z-index: 50; background: rgba(5, 6, 9, 0.7); display: grid; place-items: center; padding: 16px; animation: fade-in 0.15s ease-out; }
+.modal { width: min(360px, 100%); background: var(--bg-surface); border: 1px solid var(--border); border-radius: 20px; padding: 20px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6); }
+.qr-modal { align-items: stretch; }
+.qr-box { display: block; margin: 0 auto; border-radius: 12px; background: #fff; }
+.center-text { text-align: center; }
+.seg { display: flex; gap: 4px; padding: 3px; border-radius: 999px; background: var(--bg-elevated); align-self: center; }
+.seg button { padding: 6px 14px; border-radius: 999px; font-size: 13px; color: var(--text-2); }
+.seg button.on { background: var(--amber); color: var(--on-amber); font-weight: 600; }
+
+/* ---------- Phone in landscape (fullscreen or rotated): cinema layout ---------- */
+@media (max-height: 540px) and (orientation: landscape) {
+  .topbar { padding: 8px 14px; }
+  .room-title { font-size: 15px; line-height: 20px; }
+  .topbar .caption { display: none; }
+  .controls { padding: 0 14px 8px; }
+  .control-row { gap: 6px; margin-top: 4px; }
+  .control-row .icon-btn { width: 34px; height: 34px; }
+  .volume input[type='range'] { width: 60px; }
+  .time { font-size: 12px; }
+  /* Chat floats on the left, see-through, with everything it has on desktop. */
+  .chat-dock { left: 14px; right: auto; bottom: 62px; width: 260px; }
+  .chat-float .chat-list { max-height: 34vh; padding-top: 18px; }
+  .chat-float .composer { padding: 4px 4px 4px 12px; }
+  .chat-float .send { width: 28px; height: 28px; }
+  .chat-float .reaction-bar { justify-content: flex-start; gap: 4px; }
+  .chat-float .chip { width: 30px; height: 30px; font-size: 16px; }
+  .chat-float .chip img { width: 22px; height: 22px; }
+  .chat-float .emoji-picker { left: 0; right: auto; bottom: 40px; width: 300px; }
+  .chat-float .emoji-grid-wrap { max-height: 40vh; }
+  .big-play { width: 60px; height: 60px; }
+  .center-card { padding: 16px 22px; }
+  .unmute-pill { bottom: 64px; }
+  .react-pop, .react-pop img, .react-glyph { width: 56px; height: 56px; }
+}
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes pop-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } }

@@ -55,7 +55,7 @@ fairplay
 That's all. FairPlay picks your Videos, Movies or Downloads folder, or creates `~/Videos`, and opens the host console in your browser. Then:
 
 1. Pick a video. It starts preparing right away, and playback can begin after a few seconds. To use another folder, press **Change folder**. FairPlay remembers your choice.
-2. Create an invite for each friend. The link is copied for you to send.
+2. Create an invite for each friend. The link is copied for you to send. For a phone in the same room, press **QR** and scan it with the phone's camera.
 3. When they open it, admit them from the lobby.
 4. Press play. Everyone starts on the same tick.
 
