@@ -49,7 +49,8 @@ export function Chat({ compact = false, open = true }: { compact?: boolean; open
 
   const react = (emoji: string) => socket.send({ t: 'react', e: emoji })
 
-  const shown = compact ? msgs : msgs.slice(-VISIBLE)
+  const chatOn = you.value?.chat !== false
+  const shown = !chatOn ? [] : compact ? msgs : msgs.slice(-VISIBLE)
   const faded = !compact && idle && !hover && !focus
 
   if (!open && !compact) return null
@@ -84,6 +85,8 @@ export function Chat({ compact = false, open = true }: { compact?: boolean; open
           )
         })}
       </div>
+      {!chatOn && <div class="chat-off caption">The host has turned off chat for you</div>}
+      {chatOn && (
       <form class="composer" onSubmit={send}>
         <input
           ref={input}
@@ -103,6 +106,7 @@ export function Chat({ compact = false, open = true }: { compact?: boolean; open
           <Icon name="send" size={16} />
         </button>
       </form>
+      )}
       {settings.value.reactions && (
         <div class="reaction-bar">
           {(more ? [...REACTIONS, ...MORE_REACTIONS] : REACTIONS).map((e) => (

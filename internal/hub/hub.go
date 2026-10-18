@@ -55,6 +55,7 @@ type Peer struct {
 	Name      string  `json:"name"`
 	Role      string  `json:"role"`
 	CoHost    bool    `json:"cohost,omitempty"`
+	ChatOff   bool    `json:"chatOff,omitempty"`
 	Mode      string  `json:"mode"`
 	Buffering bool    `json:"buf"`
 	RTT       int     `json:"rtt"`
@@ -87,6 +88,7 @@ type Hub struct {
 	chatSeq    int64
 	queue      []string
 	cohost     map[string]bool
+	chatOff    map[string]bool // keyed by invite (or session) so it survives reconnects
 	statuses   map[string]media.Status
 	tunnel     TunnelInfo
 	autoplay   bool
@@ -104,7 +106,7 @@ type Hub struct {
 func New(a *auth.Store, m *media.Manager, s Settings) *Hub {
 	h := &Hub{
 		auth: a, media: m, room: room.New(), settings: s,
-		clients: map[*client]struct{}{}, cohost: map[string]bool{},
+		clients: map[*client]struct{}{}, cohost: map[string]bool{}, chatOff: map[string]bool{},
 		statuses: map[string]media.Status{}, mediaQ: map[string]media.Status{},
 		signal: make(chan struct{}, 1),
 		now:    func() int64 { return time.Now().UnixMilli() },
@@ -290,7 +292,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &client{
 		h: h, conn: conn, send: make(chan []byte, 256), ctx: ctx, cancel: cancel,
-		sid: sess.ID, role: sess.Role, name: sess.Name, device: sess.Device, mode: "follow",
+		sid: sess.ID, invite: sess.InviteID, role: sess.Role, name: sess.Name, device: sess.Device, mode: "follow",
 		chatTB: newBucket(5, 1), reactTB: newBucket(6, 3),
 	}
 	h.mu.Lock()
@@ -377,13 +379,6 @@ func (h *Hub) OnlineCount() int {
 		}
 	}
 	return len(seen)
-}
-
-// LobbyChanged can be called by the HTTP layer after it changes auth state.
-func (h *Hub) LobbyChanged() {
-	h.mu.Lock()
-	h.broadcastLobbyLocked()
-	h.mu.Unlock()
 }
 
 // ---- message handling ----
@@ -540,6 +535,28 @@ func (h *Hub) onHost(c *client, m inMsg) {
 		}
 		h.peersDirty = true
 		h.mu.Unlock()
+	case "chat_hide":
+		h.mu.Lock()
+		for cl := range h.clients {
+			if cl.sid != m.SID || cl.role == auth.RoleHost {
+				continue
+			}
+			if m.On {
+				h.chatOff[cl.chatKey()] = true
+			} else {
+				delete(h.chatOff, cl.chatKey())
+			}
+		}
+		for cl := range h.clients {
+			if cl.sid == m.SID {
+				cl.writeLocked(msg{"t": "you", "you": h.youLocked(cl)})
+				if !m.On {
+					cl.writeLocked(msg{"t": "chathist", "chat": append([]ChatMsg(nil), h.chat...)})
+				}
+			}
+		}
+		h.peersDirty = true
+		h.mu.Unlock()
 	case "settings":
 		if m.Settings == nil {
 			return
@@ -639,6 +656,10 @@ func (h *Hub) onChat(c *client, text string) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.chatOff[c.chatKey()] {
+		c.writeLocked(msg{"t": "err", "text": "the host has turned off chat for you"})
+		return
+	}
 	if !c.chatTB.take() {
 		c.writeLocked(msg{"t": "err", "text": "slow down a little"})
 		return
@@ -658,7 +679,15 @@ func (h *Hub) appendChatLocked(m ChatMsg) {
 	if len(h.chat) > 50 {
 		h.chat = h.chat[len(h.chat)-50:]
 	}
-	h.broadcastLocked(msg{"t": "chat", "m": m})
+	b, err := json.Marshal(msg{"t": "chat", "m": m})
+	if err != nil {
+		return
+	}
+	for c := range h.clients {
+		if !h.chatOff[c.chatKey()] {
+			c.sendLocked(b)
+		}
+	}
 }
 
 func (h *Hub) onReact(c *client, e string) {
@@ -681,7 +710,10 @@ func (h *Hub) helloLocked(c *client) msg {
 	if s, ok := h.statuses[st.MediaID]; ok {
 		cur = s
 	}
-	chat := append([]ChatMsg(nil), h.chat...)
+	chat := []ChatMsg{}
+	if !h.chatOff[c.chatKey()] {
+		chat = append(chat, h.chat...)
+	}
 	return msg{
 		"t": "hello", "you": h.youLocked(c), "state": st, "now": h.now(),
 		"settings": h.publicSettingsLocked(), "chat": chat, "media": cur,
@@ -690,7 +722,7 @@ func (h *Hub) helloLocked(c *client) msg {
 }
 
 func (h *Hub) youLocked(c *client) msg {
-	return msg{"id": c.sid, "name": c.name, "role": string(c.role), "control": h.canControl(c)}
+	return msg{"id": c.sid, "name": c.name, "role": string(c.role), "control": h.canControl(c), "chat": !h.chatOff[c.chatKey()]}
 }
 
 func (h *Hub) publicSettingsLocked() msg {
@@ -706,7 +738,7 @@ func (h *Hub) peersLocked() []Peer {
 		}
 		seen[c.sid] = true
 		out = append(out, Peer{
-			ID: c.sid, Name: c.name, Role: string(c.role), CoHost: h.cohost[c.sid], Mode: c.mode,
+			ID: c.sid, Name: c.name, Role: string(c.role), CoHost: h.cohost[c.sid], ChatOff: h.chatOff[c.chatKey()], Mode: c.mode,
 			Buffering: c.buffering, RTT: c.rtt, Jitter: c.jitter, Drift: c.drift, Pos: c.pos, Quality: c.q, Device: c.device,
 		})
 	}
@@ -797,8 +829,8 @@ type client struct {
 	cancel context.CancelFunc
 	once   sync.Once
 
-	sid, name, device string
-	role              auth.Role
+	sid, invite, name, device string
+	role                      auth.Role
 
 	// guarded by Hub.mu
 	mode      string
@@ -812,6 +844,15 @@ type client struct {
 	chatTB    *bucket
 	reactTB   *bucket
 	dead      bool
+}
+
+// chatKey identifies the person for chat visibility: their invite if they
+// have one, so hiding chat survives reconnects and rejoins.
+func (c *client) chatKey() string {
+	if c.invite != "" {
+		return "i:" + c.invite
+	}
+	return "s:" + c.sid
 }
 
 func (c *client) reader() {

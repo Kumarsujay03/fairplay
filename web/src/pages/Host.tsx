@@ -292,12 +292,31 @@ function MediaSummary({ m }: { m: S.MediaStatus }) {
         </div>
       </div>
       {m.state === 'encoding' && (
-        <div class="progress">
-          <div style={{ width: `${pct}%` }} />
-        </div>
+        <>
+          <div class="progress">
+            <div style={{ width: `${pct}%` }} />
+          </div>
+          <EncoderLead m={m} />
+        </>
       )}
       {m.error && <div class="caption warn-text">{m.error}</div>}
       {m.notes?.map((n) => <div class="caption muted" key={n}>{n}</div>)}
+    </div>
+  )
+}
+
+/** How far the encoder is ahead of where the room is watching. */
+function EncoderLead({ m }: { m: S.MediaStatus }) {
+  const st = S.room.value
+  if (!st || st.media !== m.id) return null
+  const now = socket.clock.now()
+  const pos = !st.playing || now < st.anchor ? st.pos : st.pos + (now - st.anchor) / 1000
+  const ahead = m.encoded - pos
+  const cls = ahead > 60 ? 'ok' : ahead > 15 ? 'warn' : 'bad'
+  return (
+    <div class={`caption tag-text ${cls}`}>
+      Encoder is {fmtTime(Math.max(0, ahead))} ahead of the room
+      {ahead <= 15 ? ' · the room pauses briefly if it catches up' : ''}
     </div>
   )
 }
@@ -556,6 +575,7 @@ function Viewers() {
                   <span class="ellipsis">{p.name}</span>
                   {p.role === 'host' && <span class="tag neutral">Host</span>}
                   {p.cohost && <span class="tag warn">Co-host</span>}
+                  {p.chatOff && <span class="tag neutral">chat hidden</span>}
                 </div>
                 <div class="row caption">
                   <span class={`tag ${s.cls}`}>{s.text}</span>
@@ -567,6 +587,13 @@ function Viewers() {
               </div>
               {p.role !== 'host' && (
                 <>
+                  <button
+                    class="btn btn-sm btn-ghost"
+                    onClick={() => socket.send({ t: 'host', op: 'chat_hide', sid: p.id, on: !p.chatOff })}
+                    title="Hidden viewers don't see chat messages and can't post. Reactions still work."
+                  >
+                    {p.chatOff ? 'Show chat' : 'Hide chat'}
+                  </button>
                   <button
                     class={`btn btn-sm ${p.cohost ? 'btn-primary' : 'btn-ghost'}`}
                     onClick={() => socket.send({ t: 'host', op: 'cohost', sid: p.id, on: !p.cohost })}

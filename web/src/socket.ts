@@ -142,6 +142,10 @@ export class Socket {
         break
       case 'you':
         S.you.value = m.you
+        if (m.you.chat === false) S.chat.value = []
+        break
+      case 'chathist':
+        S.chat.value = m.chat || []
         break
       case 'lobby': {
         const before = new Set(S.lobby.value.map((p) => p.id))

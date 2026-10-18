@@ -41,7 +41,6 @@ export class SyncEngine {
     private state: () => RoomState | null,
     private duration: () => number,
   ) {
-    video.addEventListener('seeked', this.onSeeked)
     video.addEventListener('playing', this.onPlaying)
   }
 
@@ -58,7 +57,6 @@ export class SyncEngine {
 
   destroy() {
     this.stop()
-    this.video.removeEventListener('seeked', this.onSeeked)
     this.video.removeEventListener('playing', this.onPlaying)
   }
 
@@ -170,8 +168,6 @@ export class SyncEngine {
     this.ownAction = performance.now()
     fn()
   }
-
-  private onSeeked = () => {}
 
   // Learn how long a seek takes to get playing again, so hard seeks land on
   // the room position instead of behind it.

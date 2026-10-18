@@ -163,3 +163,7 @@ video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-family: var(--fo
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+.link-btn { color: var(--text-3); text-decoration: underline dotted; }
+.link-btn:hover { color: var(--amber); }
+.chat-off { align-self: flex-end; padding: 4px 10px; border-radius: 999px; background: var(--glass); color: var(--text-2); }
+.chat-compact .chat-off { align-self: center; }
