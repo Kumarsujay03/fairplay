@@ -462,8 +462,8 @@ export function Player() {
           <div class="row">
             <ViewerStack onClick={() => setPeersOpen(!peersOpen)} />
             {me?.role === 'host' && (
-              <button class="icon-btn" title="Host console" onClick={() => navigate('/host')}>
-                <Icon name="users" />
+              <button class="icon-btn" title="Host console" aria-label="Host console" onClick={() => navigate('/host')}>
+                <Icon name="settings" />
               </button>
             )}
           </div>

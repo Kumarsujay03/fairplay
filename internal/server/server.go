@@ -38,6 +38,7 @@ type Server struct {
 	UpdateInfo  func() any        // current update status for the host console
 	OnMediaRoot func(path string) // called after the host picks a new folder
 	Firewall    func() any        // firewall that may block Wi-Fi guests, for the console
+	Shutdown    func()            // stops FairPlay; called from the host console
 }
 
 func New(a *auth.Store, h *hub.Hub, m *media.Manager, web fs.FS) *Server {
@@ -77,6 +78,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/host/browse", s.host(s.browse))
 	s.mux.HandleFunc("POST /api/host/media", s.host(s.setMedia))
 	s.mux.HandleFunc("GET /api/host/storage", s.host(s.storage))
+	s.mux.HandleFunc("POST /api/host/shutdown", s.host(s.shutdown))
 	s.mux.HandleFunc("POST /api/host/storage/clear", s.host(s.clearStorage))
 
 	s.mux.HandleFunc("GET /ws", s.ws)
@@ -440,6 +442,22 @@ func (s *Server) browse(w http.ResponseWriter, r *http.Request, _ auth.Session) 
 	}
 	home, _ := os.UserHomeDir()
 	writeJSON(w, map[string]any{"listing": l, "home": home})
+}
+
+// shutdown stops FairPlay on the host's computer, like Ctrl+C in the terminal.
+func (s *Server) shutdown(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+	if s.Shutdown == nil {
+		jsonErr(w, http.StatusNotImplemented, "stopping from the console is not available")
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	go func() {
+		time.Sleep(200 * time.Millisecond) // let the reply reach the browser first
+		s.Shutdown()
+	}()
 }
 
 func (s *Server) storage(w http.ResponseWriter, r *http.Request, _ auth.Session) {

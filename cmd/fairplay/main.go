@@ -212,6 +212,10 @@ func start(o options) {
 		fw.Done = offerFirewallFix(fw, o.port, &saved, o.data)
 	}
 	srv.Firewall = func() any { return fw }
+	srv.Shutdown = func() {
+		log.Print("the host stopped FairPlay from the console")
+		stop()
+	}
 	tunnelBin := ""
 	if o.tunnel != "off" {
 		tunnelBin = findTool(o.tunnel, o.tunnelBin)
@@ -262,6 +266,7 @@ func start(o options) {
 	<-ctx.Done()
 	fmt.Println()
 	log.Print("stopping FairPlay, the room has ended")
+	time.Sleep(400 * time.Millisecond) // let the hub say goodbye to every viewer
 	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(sctx)

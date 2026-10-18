@@ -80,11 +80,23 @@ export function Host() {
       <div class="center-page">
         <div class="join-card">
           <Logo />
-          <h1 class="h24">Host session ended</h1>
-          <div class="dim">FairPlay was restarted, so the host key changed. Open the new host link from your terminal.</div>
-          <button class="btn btn-ghost" onClick={() => { S.kicked.value = null; setPhase('login') }}>
-            Enter the new key
-          </button>
+          {/stopped|closed/i.test(S.kicked.value) ? (
+            <>
+              <h1 class="h24">FairPlay stopped</h1>
+              <div class="dim">The room has ended and FairPlay is closed on this computer. You can close this tab.</div>
+              <div class="caption muted">
+                Start it again any time with <span class="mono">fairplay</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <h1 class="h24">Host session ended</h1>
+              <div class="dim">FairPlay was restarted, so the host key changed. Open the new host link from your terminal.</div>
+              <button class="btn btn-ghost" onClick={() => { S.kicked.value = null; setPhase('login') }}>
+                Enter the new key
+              </button>
+            </>
+          )}
         </div>
       </div>
     )
@@ -181,6 +193,20 @@ function Console() {
           <span class="dot" />
           {statusLive ? `ROOM LIVE · ${fmtTime(pos)}` : st?.media ? `PAUSED · ${fmtTime(pos)}` : 'NO VIDEO'}
         </span>
+        <button
+          class="btn btn-danger"
+          title="End the room for everyone and close FairPlay on this computer"
+          onClick={async () => {
+            if (!confirm('Stop FairPlay? The room ends for everyone and FairPlay closes on this computer. Start it again with: fairplay')) return
+            try {
+              await post('/api/host/shutdown')
+            } catch {}
+            S.kicked.value = 'FairPlay has stopped on this computer. You can close this tab. Start it again with: fairplay'
+            setTimeout(() => socket.close(), 100)
+          }}
+        >
+          <Icon name="x" size={16} /> Stop FairPlay
+        </button>
         <button class="btn btn-primary" onClick={() => navigate('/room')}>
           <Icon name="play" size={16} /> Open player
         </button>
