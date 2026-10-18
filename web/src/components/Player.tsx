@@ -529,7 +529,7 @@ export function Player() {
             </div>
             <span class={`pill badge ${badge.cls}`}>
               <span class="dot" />
-              {badge.text}
+              <span class="ellipsis">{badge.text}</span>
             </span>
             {mode === 'solo' && (
               <button class="btn btn-primary btn-sm" onClick={backToLive}>

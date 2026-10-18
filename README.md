@@ -75,7 +75,17 @@ It opens only port 8321, and only to your local network, using ufw, firewalld, W
 
 ## Disk space
 
-Prepared videos are kept so a second showing starts instantly. A full movie takes a few GB.
+Prepared videos are kept so a second showing starts instantly.
+
+When the browser can play the original picture (most H.264 files), FairPlay streams it untouched and only encodes the smaller versions, so a film takes about 1.3–1.5× its file size. For a 3.5 GB 1080p film:
+
+| Quality versions (`-versions`) | Disk space |
+|---|---|
+| `original` | about 3.5 GB |
+| `balanced` (default): original + 720p | about 4.5–5 GB |
+| `full`: original + 720p + 480p | about 5.2–5.5 GB |
+
+Files the browser can't play as they are, such as HEVC, are encoded in full and usually end up about the same size as the source. The host console shows the real figure for each video.
 
 | OS | Where they are kept |
 |---|---|
@@ -184,6 +194,7 @@ The server is the clock. Each browser pings it every 2 seconds and estimates its
 | `-max` | `12` | Maximum guests |
 | `-open` | `true` | Open the host console in your browser on start |
 | `-intermission` | `5` | Default intermission length in minutes. The host can change it in the console |
+| `-versions` | `balanced` | Quality versions for new videos: `original`, `balanced` (original + 720p) or `full` (original + 720p + 480p). The host can change it in the console |
 | `-cache-max` | `40` | GB of prepared videos to keep. Older ones are removed first. `0` means no limit |
 | `-update` | `auto` | `auto`, `check` or `off` |
 | `-auto-admit` | `false` | Admit first-time opens without the lobby. Second devices always need approval |

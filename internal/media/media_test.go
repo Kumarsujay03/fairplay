@@ -283,3 +283,102 @@ func TestCachePruneAndClear(t *testing.T) {
 		t.Fatal("limit 0 means no pruning")
 	}
 }
+
+func TestPlanVersionsAndCopy(t *testing.T) {
+	h264 := &VideoInfo{Codec: "h264", Width: 1920, Height: 800, PixFmt: "yuv420p", Kbps: 2600, SAR: "1:1"}
+	names := func(rs []rung) string {
+		var s []string
+		for _, r := range rs {
+			n := r.Name
+			if r.Copy {
+				n += "(orig)"
+			}
+			s = append(s, n)
+		}
+		return strings.Join(s, ",")
+	}
+	cases := map[string]string{
+		VersionsOriginal: "1080p(orig)",
+		VersionsBalanced: "1080p(orig),720p",
+		VersionsFull:     "1080p(orig),720p,480p",
+		"nonsense":       "1080p(orig),720p",
+	}
+	for v, want := range cases {
+		if got := names(planVersions(h264, v)); got != want {
+			t.Errorf("%s: got %s want %s", v, got, want)
+		}
+	}
+	// Things browsers can't play directly are re-encoded instead of copied.
+	for name, v := range map[string]*VideoInfo{
+		"hevc":    {Codec: "hevc", Width: 1920, Height: 1080, PixFmt: "yuv420p", Kbps: 3000},
+		"10-bit":  {Codec: "h264", Width: 1920, Height: 1080, PixFmt: "yuv420p10le", Kbps: 3000},
+		"4k":      {Codec: "h264", Width: 3840, Height: 2160, PixFmt: "yuv420p", Kbps: 9000},
+		"remux":   {Codec: "h264", Width: 1920, Height: 1080, PixFmt: "yuv420p", Kbps: 35000},
+		"hdr":     {Codec: "h264", Width: 1920, Height: 1080, PixFmt: "yuv420p", Kbps: 3000, HDR: true},
+		"anamorp": {Codec: "h264", Width: 1440, Height: 1080, PixFmt: "yuv420p", Kbps: 3000, SAR: "4:3"},
+	} {
+		if canCopy(v) {
+			t.Errorf("%s must not be copied", name)
+		}
+	}
+	if got := streamOpts([]string{"-c:v", "libx264", "-preset", "fast", "-profile:v", "high"}, 2); strings.Join(got, " ") != "-c:v:2 libx264 -preset:v:2 fast -profile:v:2 high" {
+		t.Errorf("streamOpts: %v", got)
+	}
+	// 145 minutes, original 2.6 Mbps + 720p (~1.2 Mbps) + 2 audio tracks: about 4.6 GB, not 7.6.
+	est := estimateBytes(Info{Duration: 145 * 60}, planVersions(h264, VersionsBalanced), 2)
+	if est < 3.5e9 || est > 5.5e9 {
+		t.Errorf("estimate %.1f GB", float64(est)/1e9)
+	}
+}
+
+// TestOriginalIsCopiedAndAligned encodes a real 720p H.264 file: the original
+// picture must be kept as-is, a 480p version added, stereo AAC copied, and both
+// versions cut into the same segments so quality switches are seamless.
+func TestOriginalIsCopiedAndAligned(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	root := t.TempDir()
+	src := filepath.Join(root, "Clip.mp4")
+	gen := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24", "-f", "lavfi", "-i", "sine=frequency=440",
+		"-t", "12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-g", "48",
+		"-b:v", "2000k", "-c:a", "aac", "-ac", "2", src)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	m, err := NewManager(context.Background(), Options{Root: root, Cache: t.TempDir(), FFmpeg: "ffmpeg", FFprobe: "ffprobe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetVersions(VersionsBalanced)
+	items, _, _ := m.List()
+	id := items[0].ID
+	m.Prepare(id)
+	var st Status
+	for i := 0; i < 300; i++ {
+		if st, _ = m.Status(id); st.State == StateReady || st.State == StateError {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if st.State != StateReady || !st.Original || strings.Join(st.Rungs, ",") != "720p,480p" {
+		t.Fatalf("status %+v", st)
+	}
+	dir := filepath.Join(m.cache, m.key(items[0]))
+	count := func(sub string) int {
+		e, _ := filepath.Glob(filepath.Join(dir, sub, "seg_*.m4s"))
+		return len(e)
+	}
+	if a, b := count("s_v0"), count("s_v1"); a == 0 || a != b {
+		t.Fatalf("versions must have the same segments, got %d and %d", a, b)
+	}
+	// The original stream is copied: its bitrate stays at the source's ~2 Mbps.
+	master, _ := os.ReadFile(filepath.Join(dir, "master.m3u8"))
+	if !strings.Contains(string(master), "RESOLUTION=1280x720") || !strings.Contains(string(master), "RESOLUTION=854x480") {
+		t.Fatalf("master:\n%s", master)
+	}
+	if st.Disk <= 0 || st.EstBytes <= 0 {
+		t.Fatalf("disk use not reported: %+v", st)
+	}
+}

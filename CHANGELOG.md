@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.5 (2026-10-19)
+
+- Much smaller and better encodes. When the browser can play the original H.264 picture, FairPlay streams it untouched instead of re-encoding it, so the top quality is exactly the source and preparing starts faster. Smaller versions are encoded with quality-based settings capped at a bitrate, keyframes match the original so switching is seamless, and AAC stereo audio is copied. A 1080p film now takes about 1.3–1.5× its file size instead of about 2.3×
+- New host setting and `-versions` flag for the quality versions of new videos: `original` (original only), `balanced` (original + 720p, the default) or `full` (original + 720p + 480p)
+- The console shows "Original quality" and the disk space each video takes, with an estimate while it is preparing
+- Reactions rise more slowly so the animation can be seen
+- Phones: the emoji picker opens below the reactions and fits the screen; the room status pill shortens instead of running into the viewer list; the ping stays on one line; the console hides the thumbnail and uses shorter dropdown labels
+
 ## 0.1.4 (2026-10-18)
 
 - QR code for every invite in the host console: scan it with a phone camera to open the exact link, port included (typing the address without `:8321` sends the browser to the wrong place)

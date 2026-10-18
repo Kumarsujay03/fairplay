@@ -113,6 +113,11 @@ video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-family: var(--fo
 .player.compact { position: fixed; }
 .player.compact .stage { flex: none; aspect-ratio: 16 / 9; width: 100%; }
 .player.compact .topbar { padding: 10px 12px; }
+.topbar > .title-block { min-width: 0; flex: 1 1 auto; }
+.topbar > .row:last-child { flex: none; }
+.topbar .badge { min-width: 0; max-width: 100%; }
+.topbar .badge .dot { flex: none; }
+.ping { white-space: nowrap; }
 .player.compact .title-block .col, .player.compact .stack .label { display: none; }
 .player.compact .controls { padding: 0 8px 6px; }
 .player.compact .icon-btn { width: 34px; height: 34px; }
@@ -140,6 +145,7 @@ video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-family: var(--fo
 .console-grid > section { min-width: 0; }
 .url-box .mono { min-width: 0; }
 .thumb { width: 120px; height: 68px; border-radius: 10px; background: linear-gradient(135deg, #1f2a4d, #6b3819); flex: none; }
+@media (max-width: 480px) { .thumb { display: none; } }
 .library { max-height: 360px; overflow: auto; border: 1px solid var(--border); border-radius: var(--r-md); padding: 0 12px; }
 .library .lib-row + .lib-row { border-top: 1px solid var(--border); }
 .lib-row.current { color: var(--amber); }
@@ -231,7 +237,8 @@ video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-family: var(--fo
 .emoji-cell:active { transform: scale(0.9); }
 .emoji-credit { font-size: 10px; color: var(--text-3); padding: 4px 10px 8px; text-align: right; }
 .chip.more.on { background: rgba(245, 185, 66, 0.18); color: var(--amber); }
-.chat-compact .emoji-picker { left: 0; right: 0; width: auto; bottom: 100%; margin-bottom: 8px; }
+.chat-compact .emoji-picker { left: 16px; right: 16px; width: auto; max-width: none; top: 42px; bottom: calc(12px + env(safe-area-inset-bottom)); }
+.chat-compact .emoji-grid-wrap { flex: 1; min-height: 0; max-height: none; }
 .chat-compact .emoji-grid { grid-template-columns: repeat(8, 1fr); }
 .player.compact .control-row { gap: 4px; }
 .player.compact .control-row .icon-btn { width: 32px; height: 32px; }

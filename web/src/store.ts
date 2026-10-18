@@ -29,6 +29,10 @@ export interface MediaStatus {
   width?: number
   height?: number
   bitrate?: number
+  versions?: string
+  original?: boolean
+  estBytes?: number
+  disk?: number
 }
 
 export interface Peer {
@@ -93,6 +97,7 @@ export interface HostSettings {
   reactions: boolean
   maxGuests: number
   interMinutes: number
+  versions: 'original' | 'balanced' | 'full'
 }
 
 export interface Tunnel {
