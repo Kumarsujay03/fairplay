@@ -57,6 +57,13 @@ func (r *Room) Load(now int64, mediaID string, duration float64, by string) Stat
 	return r.bump()
 }
 
+// Clear stops the video for everyone and leaves the room without one.
+func (r *Room) Clear(now int64, by string) State {
+	r.st = State{Rate: 1, Anchor: now, Reason: ReasonLoading, By: by, Version: r.st.Version}
+	r.duration, r.limit = 0, 0
+	return r.bump()
+}
+
 // SetPlayable tells the room how far the encoder has got (seconds) and the
 // final duration. limit < 0 means fully encoded.
 func (r *Room) SetPlayable(duration, limit float64) {

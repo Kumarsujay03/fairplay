@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.1 (2026-10-18)
+
+- Wide films (for example 1920×800) are now prepared up to 1080p instead of 720p, never upscaled, with bitrate matched to the picture
+- Audio and subtitle tracks are named by language (English, Hindi, Indonesian…); uploader tags such as "MoviesMod.ai.in" are ignored, repeats are numbered, SDH and Forced are shown
+- The host chooses audio, subtitles and quality for everyone; each viewer can switch to their own; quality is labelled 1080p HD, 720p SD, 480p data saver, and Auto picks the best for each device and connection
+- Intermission length is a host setting (default 5 minutes, also `-intermission`)
+- Stop and clear the current video for everyone; remove single videos from the queue or clear it
+- Chat keeps 200 messages and scrolls without a scrollbar, with a "new messages" pill
+- Reactions rise from the middle of the chat
+- Firewall help: FairPlay detects ufw, firewalld, Windows and macOS firewalls that block Wi-Fi guests, offers to fix it once, and adds `fairplay firewall`
+- Storage: `fairplay cache` and `fairplay cache clear`, a Storage card in the host console, and a 20 GB limit that removes the oldest prepared videos (`-cache-max`)
+- Fix: an empty cache crashed the Storage view
+
 ## 0.1.0 (2026-10-18)
 
 First release.

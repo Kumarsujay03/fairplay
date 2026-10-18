@@ -69,10 +69,14 @@ FairPlay is a single binary you run on your own computer. It serves a small web 
 ### Encoding pipeline
 
 1. **Probe** with ffprobe for streams, codecs, duration, HDR and interlacing.
-2. **Plan** up to three rungs at or below the source height. 4K sources top out at 1080p to keep the encoder light.
+2. **Plan** up to three rungs by the picture's long side: 1920, 1280 and 854 px for 1080p, 720p and 480p. A 1920×800 film is therefore 1080p, and portrait videos are classed by their height. Rungs never upscale, and bitrate scales with the picture area. 4K sources top out at 1080p to keep the encoder light.
 3. **Transcode** to fMP4 HLS in 4-second segments. Every rung is encoded with keyframes forced at the same 4-second marks, so quality switches are seamless. Interlaced sources are deinterlaced, and HDR sources are tonemapped to SDR when the ffmpeg build has zscale. Audio becomes stereo AAC, up to six tracks. FairPlay detects NVENC, Quick Sync or VideoToolbox with a test encode and falls back to libx264 `veryfast`. ffmpeg runs at lower priority so the host's own playback stays smooth.
 4. **Play while encoding.** ffmpeg writes the master playlist within seconds and grows the variant playlists as it goes. The room can start after about 12 seconds are encoded. If playback catches up to the encoder, the room pauses briefly with the reason shown, then resumes automatically.
-5. **Cache** by file path, size and modification time, so a second showing starts instantly.
+5. **Cache** by file path, size, modification time and ladder version, so a second showing starts instantly and a new ladder prepares files again. The cache is capped at 20 GB by default (`-cache-max`), and the least recently used prepared videos are removed after each finished encode and at start. The video in use and the one still encoding are never removed.
+
+**Track names** come from the language tag: English, Hindi, Indonesian, from an ISO 639 table of about 90 languages. Titles are kept only when they add information, such as SDH, Forced or Commentary. A title repeated on every track, or one that looks like a website or release group, is ignored. Duplicates are numbered.
+
+**Track choice.** The host sets the room's audio, subtitles and quality. They reset when the video changes, and every player follows them. A viewer can override any of the three for their own screen. Auto quality is limited by the player's on-screen size times the device's pixel density, then by bandwidth, so phones settle at 720p and laptops at 1080p.
 
 Only the exact file names ffmpeg produces can be served, enforced by an allowlist regex. Guests can only reach the file the room is currently showing.
 

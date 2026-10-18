@@ -92,6 +92,7 @@ export interface HostSettings {
   waitForAll: boolean
   reactions: boolean
   maxGuests: number
+  interMinutes: number
 }
 
 export interface Tunnel {
@@ -108,11 +109,20 @@ export const media = signal<MediaStatus | null>(null)
 export const peers = signal<Peer[]>([])
 export const chat = signal<ChatMsg[]>([])
 export const queue = signal<{ id: string; name: string }[]>([])
-export const settings = signal<{ roomName: string; reactions: boolean; waitForAll: boolean }>({
+export const settings = signal<{ roomName: string; reactions: boolean; waitForAll: boolean; interMinutes?: number }>({
   roomName: 'FairPlay',
   reactions: true,
   waitForAll: false,
+  interMinutes: 5,
 })
+export interface TrackPrefs {
+  audio: number // -1 = the file's default track
+  sub: string // '' = off
+  quality: string // 'auto' or e.g. '1080p'
+}
+/** The host's choice for the room. Viewers follow it unless they pick their own. */
+export const prefs = signal<TrackPrefs>({ audio: -1, sub: '', quality: 'auto' })
+
 export const connected = signal(false)
 export const kicked = signal<string | null>(null)
 export const toast = signal<{ text: string; kind?: 'error' | 'info' } | null>(null)

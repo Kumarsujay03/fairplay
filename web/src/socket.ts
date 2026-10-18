@@ -121,6 +121,10 @@ export class Socket {
         S.media.value = m.media || null
         S.queue.value = m.queue || []
         S.peers.value = m.peers || []
+        if (m.prefs) S.prefs.value = m.prefs
+        break
+      case 'prefs':
+        S.prefs.value = m.prefs
         break
       case 'state':
         if (!S.room.value || m.state.v >= S.room.value.v || m.state.media !== S.room.value.media) S.room.value = m.state
@@ -129,7 +133,7 @@ export class Socket {
         S.media.value = m.media
         break
       case 'chat':
-        S.chat.value = [...S.chat.value, m.m].slice(-50)
+        S.chat.value = [...S.chat.value, m.m].slice(-200)
         break
       case 'peers':
         S.peers.value = m.peers || []

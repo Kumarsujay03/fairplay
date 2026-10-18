@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +16,9 @@ import (
 
 // settings are remembered between runs in <data>/settings.json.
 type settings struct {
-	Media string `json:"media,omitempty"`
+	Media         string `json:"media,omitempty"`
+	FirewallOK    string `json:"firewallOK,omitempty"`    // "<kind>:<port>" once the fix ran
+	FirewallAsked string `json:"firewallAsked,omitempty"` // asked once, don't nag on every start
 }
 
 func loadSettings(dir string) settings {
@@ -290,4 +293,74 @@ func runCheck(o options) {
 		fmt.Printf("  %-12s       http://%s:%d\n", "wi-fi", u, o.port)
 	}
 	fmt.Printf("  %-12s       %s\n", "updates", o.update)
+	exe, _ := os.Executable()
+	if fw := detectFirewall(o.port, lanNets(), exe); fw.Kind != "" {
+		state := "may block Wi-Fi guests, fix with: fairplay firewall"
+		if saved.FirewallOK == firewallKey(fw, o.port) {
+			state = "Wi-Fi guests allowed by fairplay firewall"
+		}
+		fmt.Printf("  %-12s       %s, %s\n", "firewall", fw.Kind, state)
+	} else {
+		fmt.Printf("  %-12s       none blocking found\n", "firewall")
+	}
+}
+
+// runCache is `fairplay cache` and `fairplay cache clear`.
+func runCache(sub string, o options) {
+	list, total := media.CacheUsage(o.cache)
+	switch sub {
+	case "", "list", "show":
+		fmt.Printf("Prepared videos are kept in %s\n", o.cache)
+		fmt.Printf("They use %s", gb(total))
+		if o.cacheMaxGB > 0 {
+			fmt.Printf(" (limit %.0f GB; older ones are removed automatically, change with -cache-max)", o.cacheMaxGB)
+		}
+		fmt.Println()
+		if len(list) == 0 {
+			fmt.Println("Nothing is prepared yet.")
+			return
+		}
+		fmt.Println()
+		for _, e := range list {
+			state := ""
+			if !e.Done {
+				state = "  (unfinished)"
+			}
+			fmt.Printf("  %9s  %s  %s%s\n", gb(e.Bytes), e.LastUsed.Format("2006-01-02"), e.Name, state)
+		}
+		fmt.Println("\nFree the space with: fairplay cache clear")
+		fmt.Println("Videos are prepared again the next time you play them.")
+	case "clear", "clean":
+		if portBusy(o.port) {
+			fmt.Println("FairPlay is running. Use \"Clear prepared videos\" in the host console instead, or stop FairPlay first.")
+			os.Exit(1)
+		}
+		if err := os.RemoveAll(o.cache); err != nil {
+			fail("could not delete %s: %v", o.cache, err)
+		}
+		fmt.Printf("Deleted %s of prepared videos from %s\n", gb(total), o.cache)
+	default:
+		fail("unknown cache command %q. Use `fairplay cache` or `fairplay cache clear`.", sub)
+	}
+}
+
+func gb(n int64) string {
+	switch {
+	case n >= 1e9:
+		return fmt.Sprintf("%.1f GB", float64(n)/1e9)
+	case n >= 1e6:
+		return fmt.Sprintf("%.0f MB", float64(n)/1e6)
+	default:
+		return fmt.Sprintf("%d KB", n/1e3)
+	}
+}
+
+// portBusy reports whether something (usually a running FairPlay) holds the port.
+func portBusy(port int) bool {
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return true
+	}
+	ln.Close()
+	return false
 }

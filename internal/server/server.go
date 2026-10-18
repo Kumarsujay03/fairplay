@@ -37,6 +37,7 @@ type Server struct {
 	Version     string
 	UpdateInfo  func() any        // current update status for the host console
 	OnMediaRoot func(path string) // called after the host picks a new folder
+	Firewall    func() any        // firewall that may block Wi-Fi guests, for the console
 }
 
 func New(a *auth.Store, h *hub.Hub, m *media.Manager, web fs.FS) *Server {
@@ -75,6 +76,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/host/info", s.host(s.info))
 	s.mux.HandleFunc("GET /api/host/browse", s.host(s.browse))
 	s.mux.HandleFunc("POST /api/host/media", s.host(s.setMedia))
+	s.mux.HandleFunc("GET /api/host/storage", s.host(s.storage))
+	s.mux.HandleFunc("POST /api/host/storage/clear", s.host(s.clearStorage))
 
 	s.mux.HandleFunc("GET /ws", s.ws)
 	s.mux.HandleFunc("GET /hls/{id}/{file...}", s.hls)
@@ -403,8 +406,15 @@ func (s *Server) info(w http.ResponseWriter, r *http.Request, _ auth.Session) {
 	}
 	writeJSON(w, map[string]any{
 		"tunnel": s.Hub.Tunnel(), "encoder": s.Media.EncoderName(), "settings": s.Hub.Settings(),
-		"version": s.Version, "update": upd, "root": s.Media.Root(),
+		"version": s.Version, "update": upd, "root": s.Media.Root(), "firewall": fwInfo(s.Firewall),
 	})
+}
+
+func fwInfo(f func() any) any {
+	if f == nil {
+		return nil
+	}
+	return f()
 }
 
 // expandHome turns "~/Movies" into an absolute path.
@@ -430,6 +440,17 @@ func (s *Server) browse(w http.ResponseWriter, r *http.Request, _ auth.Session) 
 	}
 	home, _ := os.UserHomeDir()
 	writeJSON(w, map[string]any{"listing": l, "home": home})
+}
+
+func (s *Server) storage(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+	list, total, dir := s.Media.Usage(s.Hub.CurrentMedia())
+	writeJSON(w, map[string]any{"path": dir, "bytes": total, "items": list, "max": s.Media.MaxCache})
+}
+
+func (s *Server) clearStorage(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+	freed := s.Media.ClearCache(s.Hub.CurrentMedia())
+	list, total, dir := s.Media.Usage(s.Hub.CurrentMedia())
+	writeJSON(w, map[string]any{"freed": freed, "path": dir, "bytes": total, "items": list, "max": s.Media.MaxCache})
 }
 
 func (s *Server) setMedia(w http.ResponseWriter, r *http.Request, _ auth.Session) {

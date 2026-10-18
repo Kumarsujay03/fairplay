@@ -36,9 +36,10 @@ var version = "dev"
 
 type options struct {
 	media, tunnel, tunnelBin, ffmpeg, ffprobe, cache, data, name, update string
-	port, maxGuests                                                      int
+	port, maxGuests, interMinutes                                        int
 	lan, autoAdmit, open                                                 bool
 	mediaSet                                                             bool // -media was given explicitly
+	cacheMaxGB                                                           float64
 }
 
 func parseFlags(name string, args []string) options {
@@ -54,9 +55,11 @@ func parseFlags(name string, args []string) options {
 	fs.StringVar(&o.ffmpeg, "ffmpeg", "", "path to ffmpeg (default: search)")
 	fs.StringVar(&o.ffprobe, "ffprobe", "", "path to ffprobe (default: search)")
 	fs.StringVar(&o.cache, "cache", filepath.Join(cacheDir, "fairplay"), "folder for prepared videos (safe to delete)")
+	fs.Float64Var(&o.cacheMaxGB, "cache-max", 20, "keep at most this many GB of prepared videos; older ones are removed (0 = no limit)")
 	fs.StringVar(&o.data, "data", filepath.Join(cfgDir, "fairplay"), "folder for invites and settings")
 	fs.StringVar(&o.name, "name", "Movie night", "room name guests see")
 	fs.IntVar(&o.maxGuests, "max", 12, "maximum number of guests")
+	fs.IntVar(&o.interMinutes, "intermission", 5, "default intermission length in minutes (the host can change it in the console)")
 	fs.BoolVar(&o.autoAdmit, "auto-admit", false, "admit first-time invite opens without the lobby (second devices always need approval)")
 	fs.BoolVar(&o.open, "open", true, "open the host console in your browser on start")
 	fs.StringVar(&o.update, "update", envOr("FAIRPLAY_UPDATE", "auto"), "updates: auto (install on start), check (only tell me) or off")
@@ -80,6 +83,9 @@ Usage:
   fairplay [options]      start a room and open the host console
   fairplay update         install the latest release now
   fairplay check          show what FairPlay found on this computer
+  fairplay firewall       let guests on your Wi-Fi through this computer's firewall
+  fairplay cache          show how much space prepared videos use
+  fairplay cache clear    delete prepared videos to free space
   fairplay version        print the version
 
 Common options:
@@ -107,6 +113,14 @@ func main() {
 		runUpdate()
 	case "check", "doctor":
 		runCheck(parseFlags("fairplay check", args))
+	case "firewall":
+		runFirewall(parseFlags("fairplay firewall", args))
+	case "cache":
+		sub := ""
+		if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+			sub, args = args[0], args[1:]
+		}
+		runCache(sub, parseFlags("fairplay cache", args))
 	case "version", "--version", "-version":
 		fmt.Println("fairplay", version)
 	case "help", "-h", "--help":
@@ -149,8 +163,13 @@ func start(o options) {
 	if err != nil {
 		fail("%v", err)
 	}
-	h := hub.New(store, mm, hub.Settings{RoomName: o.name, AutoAdmit: o.autoAdmit, Reactions: true, MaxGuests: o.maxGuests})
+	mm.MaxCache = int64(o.cacheMaxGB * 1e9)
+	h := hub.New(store, mm, hub.Settings{RoomName: o.name, AutoAdmit: o.autoAdmit, Reactions: true, MaxGuests: o.maxGuests, InterMinutes: o.interMinutes})
 	srv := server.New(store, h, mm, webui.FS())
+	mm.Current = h.CurrentMedia
+	if freed := mm.Prune(mm.MaxCache, ""); freed > 0 {
+		log.Printf("freed %.1f GB of older prepared videos (limit %.0f GB, change with -cache-max)", float64(freed)/1e9, o.cacheMaxGB)
+	}
 	srv.Version = version
 	srv.UpdateInfo = updates.info
 	srv.OnMediaRoot = func(p string) {
@@ -183,11 +202,16 @@ func start(o options) {
 	}
 
 	var lanURLs []string
+	var fw firewall
 	if o.lan {
 		for _, ip := range lanIPs() {
 			lanURLs = append(lanURLs, fmt.Sprintf("http://%s:%d", ip, o.port))
 		}
+		exe, _ := os.Executable()
+		fw = detectFirewall(o.port, lanNets(), exe)
+		fw.Done = offerFirewallFix(fw, o.port, &saved, o.data)
 	}
+	srv.Firewall = func() any { return fw }
 	tunnelBin := ""
 	if o.tunnel != "off" {
 		tunnelBin = findTool(o.tunnel, o.tunnelBin)
@@ -231,7 +255,7 @@ func start(o options) {
 	hostURL := fmt.Sprintf("http://127.0.0.1:%d/host#k=%s", o.port, store.HostKey())
 	opened := o.open && openBrowser(hostURL)
 	printBanner(bannerInfo{
-		hostURL: hostURL, opened: opened, root: mm.Root(), created: created, lan: lanURLs,
+		hostURL: hostURL, opened: opened, root: mm.Root(), created: created, lan: lanURLs, fw: fw,
 		tunnel: o.tunnel, tunnelMissing: o.tunnel != "off" && tunnelBin == "", encoder: mm.EncoderName(),
 	})
 
@@ -245,6 +269,7 @@ func start(o options) {
 }
 
 type bannerInfo struct {
+	fw                             firewall
 	hostURL, root, tunnel, encoder string
 	lan                            []string
 	opened, created, tunnelMissing bool
@@ -266,6 +291,9 @@ func printBanner(b bannerInfo) {
 	fmt.Printf("  Videos     %s (%s)\n", tildePath(b.root), note)
 	for _, u := range b.lan {
 		fmt.Printf("  Wi-Fi      %s\n", u)
+	}
+	if b.fw.Kind != "" && !b.fw.Done {
+		fmt.Printf("             Your firewall (%s) may block Wi-Fi guests. Fix it once with: fairplay firewall\n", b.fw.Kind)
 	}
 	switch {
 	case b.tunnel == "off":

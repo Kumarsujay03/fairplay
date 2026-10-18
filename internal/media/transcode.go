@@ -11,35 +11,47 @@ import (
 
 type rung struct {
 	Name    string
-	Height  int
-	Bitrate int // kbps
+	Long    int // long side in pixels: 1920 for "1080p"
+	Bitrate int // kbps for a full 16:9 picture
 }
 
 var ladder = []rung{
-	{"1080p", 1080, 5000},
-	{"720p", 720, 2800},
-	{"480p", 480, 1400},
-	{"360p", 360, 800},
+	{"1080p", 1920, 5000},
+	{"720p", 1280, 2800},
+	{"480p", 854, 1400},
+	{"360p", 640, 800},
 }
 
-// planLadder picks up to three rungs at or below the source height.
-// 4K sources top out at 1080p to keep the encoder light.
-func planLadder(height int) []rung {
+// planLadder picks up to three rungs at or below the source size. Quality is
+// judged by the long side, so a 1920×800 film is 1080p (not 720p) and a
+// portrait phone video is classed by its height. Bitrates shrink with the
+// picture area, so wide films use less bandwidth. 4K tops out at 1080p.
+func planLadder(width, height int) []rung {
+	long, short := width, height
+	if height > width {
+		long, short = height, width
+	}
+	if long <= 0 {
+		long, short = 1280, 720
+	}
+	area := float64(short) / (float64(long) * 9 / 16) // 1.0 for 16:9, ~0.74 for 2.40:1
+	if area > 1 {
+		area = 1
+	}
+	if area < 0.5 {
+		area = 0.5
+	}
 	var out []rung
 	for _, r := range ladder {
-		if r.Height <= height+height/20 {
-			out = append(out, r)
+		if r.Long <= long+long/20 {
+			out = append(out, rung{r.Name, r.Long, int(float64(r.Bitrate) * area)})
 		}
 		if len(out) == 3 {
 			break
 		}
 	}
 	if len(out) == 0 {
-		h := height &^ 1
-		if h < 2 {
-			h = 240
-		}
-		out = []rung{{fmt.Sprintf("%dp", h), h, 600}}
+		out = []rung{{fmt.Sprintf("%dp", short&^1), long &^ 1, 600}}
 	}
 	return out
 }
@@ -97,7 +109,8 @@ const maxAudioTracks = 6
 
 // buildArgs returns the ffmpeg arguments for one ladder transcode into dir.
 func buildArgs(input string, info Info, enc Encoder, tonemap bool) ([]string, []rung, []AudioInfo) {
-	rungs := planLadder(info.Video.Height)
+	rungs := planLadder(info.Video.Width, info.Video.Height)
+	portrait := info.Video.Height > info.Video.Width
 	audio := info.Audio
 	if len(audio) > maxAudioTracks {
 		audio = audio[:maxAudioTracks]
@@ -118,7 +131,12 @@ func buildArgs(input string, info Info, enc Encoder, tonemap bool) ([]string, []
 		fc += fmt.Sprintf("[s%d]", i)
 	}
 	for i, r := range rungs {
-		fc += fmt.Sprintf(";[s%d]scale=-2:%d:flags=bicubic[v%d]", i, r.Height, i)
+		// Scale the long side down to the rung, never up, keeping the shape.
+		if portrait {
+			fc += fmt.Sprintf(";[s%d]scale=-2:'min(%d,ih)':flags=bicubic[v%d]", i, r.Long, i)
+		} else {
+			fc += fmt.Sprintf(";[s%d]scale='min(%d,iw)':-2:flags=bicubic[v%d]", i, r.Long, i)
+		}
 	}
 
 	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i", input, "-filter_complex", fc}

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -31,6 +32,8 @@ type Settings struct {
 	WaitForAll bool   `json:"waitForAll"`
 	Reactions  bool   `json:"reactions"`
 	MaxGuests  int    `json:"maxGuests"`
+	// InterMinutes is the default intermission length the host's buttons use.
+	InterMinutes int `json:"interMinutes"`
 }
 
 type TunnelInfo struct {
@@ -40,6 +43,21 @@ type TunnelInfo struct {
 	Error    string   `json:"error,omitempty"`
 	LAN      []string `json:"lan,omitempty"`
 }
+
+// TrackPrefs is the host's choice of audio, subtitles and quality for the
+// current video. Every viewer follows it unless they pick their own.
+type TrackPrefs struct {
+	Audio   int    `json:"audio"`   // audio track index, -1 = the file's default
+	Sub     string `json:"sub"`     // subtitle track id, "" = off
+	Quality string `json:"quality"` // "auto" or a rung such as "1080p"
+}
+
+func defaultPrefs() TrackPrefs { return TrackPrefs{Audio: -1, Quality: "auto"} }
+
+var (
+	subIDRe   = regexp.MustCompile(`^(sub|ext)_[0-9]{1,3}$`)
+	qualityRe = regexp.MustCompile(`^[0-9]{3,4}p$`)
+)
 
 type ChatMsg struct {
 	ID   int64  `json:"id"`
@@ -71,6 +89,13 @@ type QueueItem struct {
 	Name string `json:"name"`
 }
 
+// maxAudioTracks matches the transcoder's limit.
+const maxAudioTracks = 6
+
+// chatHistory is how many messages a room keeps; late joiners and anyone
+// scrolling back can read them.
+const chatHistory = 200
+
 var allowedReactions = map[string]bool{
 	"🔥": true, "😂": true, "😭": true, "👏": true, "❤️": true, "🍿": true,
 	"🤯": true, "😮": true, "👀": true, "💀": true, "🙌": true, "😍": true,
@@ -92,6 +117,7 @@ type Hub struct {
 	statuses   map[string]media.Status
 	tunnel     TunnelInfo
 	autoplay   bool
+	prefs      TrackPrefs
 	peersDirty bool
 	bufClear   time.Time
 
@@ -104,12 +130,15 @@ type Hub struct {
 }
 
 func New(a *auth.Store, m *media.Manager, s Settings) *Hub {
+	if s.InterMinutes <= 0 {
+		s.InterMinutes = 5
+	}
 	h := &Hub{
 		auth: a, media: m, room: room.New(), settings: s,
 		clients: map[*client]struct{}{}, cohost: map[string]bool{}, chatOff: map[string]bool{},
 		statuses: map[string]media.Status{}, mediaQ: map[string]media.Status{},
-		signal: make(chan struct{}, 1),
-		now:    func() int64 { return time.Now().UnixMilli() },
+		signal: make(chan struct{}, 1), prefs: defaultPrefs(),
+		now: func() int64 { return time.Now().UnixMilli() },
 	}
 	a.OnChange = func() {
 		h.sigMu.Lock()
@@ -394,26 +423,27 @@ func (h *Hub) OnlineCount() int {
 type msg map[string]any
 
 type inMsg struct {
-	T        string    `json:"t"`
-	C        float64   `json:"c"`
-	Mode     string    `json:"mode"`
-	Buf      bool      `json:"buf"`
-	Pos      float64   `json:"pos"`
-	RTT      int       `json:"rtt"`
-	Jit      int       `json:"jit"`
-	Drift    int       `json:"drift"`
-	Q        string    `json:"q"`
-	Text     string    `json:"text"`
-	E        string    `json:"e"`
-	Op       string    `json:"op"`
-	Sec      int       `json:"sec"`
-	Media    string    `json:"media"`
-	SID      string    `json:"sid"`
-	On       bool      `json:"on"`
-	Name     string    `json:"name"`
-	Index    int       `json:"index"`
-	To       int       `json:"to"`
-	Settings *Settings `json:"settings"`
+	T        string      `json:"t"`
+	C        float64     `json:"c"`
+	Mode     string      `json:"mode"`
+	Buf      bool        `json:"buf"`
+	Pos      float64     `json:"pos"`
+	RTT      int         `json:"rtt"`
+	Jit      int         `json:"jit"`
+	Drift    int         `json:"drift"`
+	Q        string      `json:"q"`
+	Text     string      `json:"text"`
+	E        string      `json:"e"`
+	Op       string      `json:"op"`
+	Sec      int         `json:"sec"`
+	Media    string      `json:"media"`
+	SID      string      `json:"sid"`
+	On       bool        `json:"on"`
+	Name     string      `json:"name"`
+	Index    int         `json:"index"`
+	To       int         `json:"to"`
+	Settings *Settings   `json:"settings"`
+	Prefs    *TrackPrefs `json:"prefs"`
 }
 
 func (h *Hub) handle(c *client, m inMsg) {
@@ -575,14 +605,58 @@ func (h *Hub) onHost(c *client, m inMsg) {
 			ns.RoomName = "Movie night"
 		}
 		ns.MaxGuests = clampInt(ns.MaxGuests, 1, 50)
+		if ns.InterMinutes <= 0 {
+			ns.InterMinutes = 5
+		}
+		ns.InterMinutes = clampInt(ns.InterMinutes, 1, 120)
 		h.mu.Lock()
 		h.settings = ns
 		h.broadcastLocked(msg{"t": "settings", "settings": h.publicSettingsLocked()})
 		h.toHostsLocked(msg{"t": "hostsettings", "settings": ns})
 		h.mu.Unlock()
+	case "prefs":
+		if m.Prefs == nil {
+			return
+		}
+		p := *m.Prefs
+		if p.Audio < -1 || p.Audio >= maxAudioTracks {
+			p.Audio = -1
+		}
+		if p.Sub != "" && !subIDRe.MatchString(p.Sub) {
+			p.Sub = ""
+		}
+		if p.Quality != "auto" && !qualityRe.MatchString(p.Quality) {
+			p.Quality = "auto"
+		}
+		h.mu.Lock()
+		h.prefs = p
+		h.broadcastLocked(msg{"t": "prefs", "prefs": p})
+		h.mu.Unlock()
 	case "load":
 		h.mu.Lock()
 		h.loadLocked(m.Media, c.name, false)
+		h.mu.Unlock()
+	case "clear":
+		// Stop the video for everyone: no media, no encode, a clean player.
+		h.mu.Lock()
+		cur := h.room.State().MediaID
+		if cur == "" {
+			h.mu.Unlock()
+			return
+		}
+		s := h.room.Clear(h.now(), c.name)
+		h.autoplay = false
+		h.prefs = defaultPrefs()
+		h.broadcastStateLocked(s)
+		h.broadcastLocked(msg{"t": "media", "media": nil})
+		h.broadcastLocked(msg{"t": "prefs", "prefs": h.prefs})
+		h.systemChatLocked(c.name + " stopped the video")
+		h.mu.Unlock()
+		go h.media.Cancel(cur)
+	case "queue_clear":
+		h.mu.Lock()
+		h.queue = nil
+		h.broadcastQueueLocked()
 		h.mu.Unlock()
 	case "queue_add":
 		if _, ok := h.media.Item(m.Media); !ok {
@@ -642,6 +716,8 @@ func (h *Hub) loadLocked(id, by string, autoplay bool) {
 	}
 	s := h.room.Load(h.now(), id, dur, by)
 	h.autoplay = autoplay
+	h.prefs = defaultPrefs() // a new film starts on its own default tracks
+	h.broadcastLocked(msg{"t": "prefs", "prefs": h.prefs})
 	h.broadcastStateLocked(s)
 	if st, ok := h.statuses[id]; ok {
 		h.broadcastLocked(msg{"t": "media", "media": st})
@@ -684,8 +760,8 @@ func (h *Hub) systemChatLocked(text string) {
 
 func (h *Hub) appendChatLocked(m ChatMsg) {
 	h.chat = append(h.chat, m)
-	if len(h.chat) > 50 {
-		h.chat = h.chat[len(h.chat)-50:]
+	if len(h.chat) > chatHistory {
+		h.chat = h.chat[len(h.chat)-chatHistory:]
 	}
 	b, err := json.Marshal(msg{"t": "chat", "m": m})
 	if err != nil {
@@ -725,7 +801,7 @@ func (h *Hub) helloLocked(c *client) msg {
 	return msg{
 		"t": "hello", "you": h.youLocked(c), "state": st, "now": h.now(),
 		"settings": h.publicSettingsLocked(), "chat": chat, "media": cur,
-		"queue": h.queueItemsLocked(), "peers": h.peersLocked(),
+		"queue": h.queueItemsLocked(), "peers": h.peersLocked(), "prefs": h.prefs,
 	}
 }
 
@@ -734,7 +810,7 @@ func (h *Hub) youLocked(c *client) msg {
 }
 
 func (h *Hub) publicSettingsLocked() msg {
-	return msg{"roomName": h.settings.RoomName, "reactions": h.settings.Reactions, "waitForAll": h.settings.WaitForAll}
+	return msg{"roomName": h.settings.RoomName, "reactions": h.settings.Reactions, "waitForAll": h.settings.WaitForAll, "interMinutes": h.settings.InterMinutes}
 }
 
 func (h *Hub) peersLocked() []Peer {

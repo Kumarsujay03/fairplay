@@ -12,15 +12,33 @@ import (
 )
 
 func TestPlanLadder(t *testing.T) {
-	cases := map[int]string{2160: "1080p,720p,480p", 1080: "1080p,720p,480p", 800: "720p,480p,360p", 480: "480p,360p", 240: "240p"}
-	for h, want := range cases {
+	cases := []struct {
+		w, h int
+		want string
+	}{
+		{3840, 2160, "1080p,720p,480p"},
+		{1920, 1080, "1080p,720p,480p"},
+		{1920, 800, "1080p,720p,480p"}, // 2.40:1 film is still 1080p
+		{1920, 1040, "1080p,720p,480p"},
+		{1280, 720, "720p,480p,360p"},
+		{1280, 534, "720p,480p,360p"},
+		{854, 480, "480p,360p"},
+		{1080, 1920, "1080p,720p,480p"}, // portrait phone video
+		{426, 240, "240p"},
+	}
+	for _, c := range cases {
 		var got []string
-		for _, r := range planLadder(h) {
+		for _, r := range planLadder(c.w, c.h) {
 			got = append(got, r.Name)
 		}
-		if strings.Join(got, ",") != want {
-			t.Errorf("planLadder(%d)=%v want %s", h, got, want)
+		if strings.Join(got, ",") != c.want {
+			t.Errorf("planLadder(%d,%d)=%v want %s", c.w, c.h, got, c.want)
 		}
+	}
+	wide := planLadder(1920, 800)[0].Bitrate
+	full := planLadder(1920, 1080)[0].Bitrate
+	if !(wide < full && wide > full/2) {
+		t.Errorf("wide film bitrate %d should be below 16:9 bitrate %d", wide, full)
 	}
 }
 
@@ -165,5 +183,88 @@ func TestBrowseAndSetRoot(t *testing.T) {
 	}
 	if err := m.SetRoot(filepath.Join(root, "a.mkv")); err == nil {
 		t.Fatal("a file is not a folder")
+	}
+}
+
+func TestTrackLabels(t *testing.T) {
+	junk := []string{"MoviesMod.ai.in", "MoviesMod.ai.in"}
+	if got := trackLabel("eng", "MoviesMod.ai.in", junk, "Track 1"); got != "English" {
+		t.Errorf("junk title must fall back to the language, got %q", got)
+	}
+	if got := trackLabel("hin", "MoviesMod.ai.in", junk, "Track 2"); got != "Hindi" {
+		t.Errorf("got %q", got)
+	}
+	if got := trackLabel("eng", "SDH", []string{"SDH", ""}, "x"); got != "English · SDH" {
+		t.Errorf("useful title is kept, got %q", got)
+	}
+	if got := trackLabel("eng", "English", []string{"English"}, "x", "Forced"); got != "English · Forced" {
+		t.Errorf("got %q", got)
+	}
+	if got := trackLabel("", "Director's commentary", []string{"Director's commentary"}, "Track 1"); got != "Director's commentary" {
+		t.Errorf("no language: title is used, got %q", got)
+	}
+	if got := trackLabel("und", "www.site.com", []string{"www.site.com"}, "Track 3"); got != "Track 3" {
+		t.Errorf("got %q", got)
+	}
+	if got := dedupeLabels([]string{"English", "English", "Hindi"}); strings.Join(got, ",") != "English,English 2,Hindi" {
+		t.Errorf("got %v", got)
+	}
+}
+
+func TestLangNames(t *testing.T) {
+	cases := map[string]string{"ind": "Indonesian", "rum": "Romanian", "ron": "Romanian", "chi": "Chinese", "spa": "Spanish",
+		"jpn": "Japanese", "hin": "Hindi", "en-US": "English", "pt_BR": "Brazilian Portuguese", "pt-PT": "Portuguese", "pob": "Brazilian Portuguese", "English": "English"}
+	for code, want := range cases {
+		if got := langName(code); got != want {
+			t.Errorf("langName(%q)=%q want %q", code, got, want)
+		}
+	}
+	// The real-world case: 12 subtitle tracks all titled with the uploader's site.
+	langs := []string{"eng", "eng", "eng", "eng", "eng", "chi", "spa", "spa", "ind", "jpn", "jpn", "rum"}
+	titles := make([]string, len(langs))
+	for i := range titles {
+		titles[i] = "MoviesMod.ai.in"
+	}
+	var labels []string
+	for i, l := range langs {
+		labels = append(labels, trackLabel(l, titles[i], titles, "x"))
+	}
+	got := strings.Join(dedupeLabels(labels), ", ")
+	want := "English, English 2, English 3, English 4, English 5, Chinese, Spanish, Spanish 2, Indonesian, Japanese, Japanese 2, Romanian"
+	if got != want {
+		t.Errorf("got  %s\nwant %s", got, want)
+	}
+}
+
+func TestCachePruneAndClear(t *testing.T) {
+	cache := t.TempDir()
+	mk := func(key, name string, mb int, age time.Duration) {
+		d := filepath.Join(cache, key)
+		os.MkdirAll(d, 0o700)
+		os.WriteFile(filepath.Join(d, "seg.m4s"), make([]byte, mb<<20), 0o600)
+		os.WriteFile(filepath.Join(d, "status.json"), []byte(`{"name":"`+name+`"}`), 0o600)
+		os.WriteFile(filepath.Join(d, ".done"), nil, 0o600)
+		ts := time.Now().Add(-age)
+		os.Chtimes(d, ts, ts)
+	}
+	mk("old", "Old film", 3, 72*time.Hour)
+	mk("mid", "Mid film", 3, 24*time.Hour)
+	mk("cur", "Current film", 3, 96*time.Hour) // oldest, but playing right now
+	m := &Manager{cache: cache, items: map[string]Item{}, statuses: map[string]*Status{"room": {ID: "room", key: "cur"}}}
+
+	list, total := CacheUsage(cache)
+	if len(list) != 3 || total < 9<<20 || list[0].Name != "Mid film" {
+		t.Fatalf("usage %+v total %d", list, total)
+	}
+	freed := m.Prune(7<<20, "room") // 9 MB used, limit 7 MB: only the oldest unused film goes
+	if freed < 3<<20 || fileExists(filepath.Join(cache, "old")) || !fileExists(filepath.Join(cache, "cur")) || !fileExists(filepath.Join(cache, "mid")) {
+		t.Fatalf("prune freed %d; old gone=%v cur kept=%v", freed, !fileExists(filepath.Join(cache, "old")), fileExists(filepath.Join(cache, "cur")))
+	}
+	m.ClearCache("room")
+	if fileExists(filepath.Join(cache, "mid")) || !fileExists(filepath.Join(cache, "cur")) {
+		t.Fatal("clear must remove everything except the video in use")
+	}
+	if m.Prune(0, "") != 0 {
+		t.Fatal("limit 0 means no pruning")
 	}
 }

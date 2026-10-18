@@ -148,3 +148,16 @@ func TestLeadBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestClearLeavesNoVideo(t *testing.T) {
+	r := ready(t)
+	r.Play(0, 0, "h")
+	v := r.State().Version
+	st := r.Clear(5000, "h")
+	if st.MediaID != "" || st.Playing || st.Version <= v {
+		t.Fatalf("got %+v", st)
+	}
+	if _, ok := r.Play(6000, 0, "h"); ok {
+		t.Fatal("cannot play with no video")
+	}
+}

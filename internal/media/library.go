@@ -6,9 +6,11 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -166,8 +168,13 @@ func Browse(dir string) (Listing, error) {
 	return l, nil
 }
 
+// ladderVersion changes whenever the encoding ladder changes, so files
+// prepared by an older FairPlay are prepared again.
+const ladderVersion = "ladder-v3"
+
 func cacheKey(it Item) string {
 	h := sha1.New()
+	h.Write([]byte(ladderVersion))
 	h.Write([]byte(it.abs))
 	h.Write([]byte{0})
 	h.Write([]byte(it.ModTime.UTC().Format(time.RFC3339Nano)))
@@ -205,24 +212,307 @@ func subLabel(video, sub string) (label, lang string) {
 }
 
 var langNames = map[string]string{
-	"en": "English", "eng": "English", "hi": "Hindi", "hin": "Hindi", "es": "Spanish", "spa": "Spanish",
-	"fr": "French", "fre": "French", "fra": "French", "de": "German", "ger": "German", "deu": "German",
-	"it": "Italian", "ita": "Italian", "ja": "Japanese", "jpn": "Japanese", "ko": "Korean", "kor": "Korean",
-	"zh": "Chinese", "chi": "Chinese", "zho": "Chinese", "ru": "Russian", "rus": "Russian", "pt": "Portuguese",
-	"por": "Portuguese", "ar": "Arabic", "ara": "Arabic", "ta": "Tamil", "tam": "Tamil", "te": "Telugu",
-	"tel": "Telugu", "bn": "Bengali", "ben": "Bengali", "mr": "Marathi", "mar": "Marathi", "ml": "Malayalam",
-	"mal": "Malayalam", "kn": "Kannada", "kan": "Kannada", "pa": "Punjabi", "pan": "Punjabi", "ur": "Urdu",
-	"urd": "Urdu", "gu": "Gujarati", "guj": "Gujarati", "tr": "Turkish", "tur": "Turkish", "nl": "Dutch",
-	"dut": "Dutch", "nld": "Dutch", "pl": "Polish", "pol": "Polish", "sv": "Swedish", "swe": "Swedish",
-	"und": "Unknown",
+	"en":    "English",
+	"eng":   "English",
+	"hi":    "Hindi",
+	"hin":   "Hindi",
+	"es":    "Spanish",
+	"spa":   "Spanish",
+	"fr":    "French",
+	"fre":   "French",
+	"fra":   "French",
+	"de":    "German",
+	"ger":   "German",
+	"deu":   "German",
+	"it":    "Italian",
+	"ita":   "Italian",
+	"pt":    "Portuguese",
+	"por":   "Portuguese",
+	"pt-br": "Brazilian Portuguese",
+	"pob":   "Brazilian Portuguese",
+	"ru":    "Russian",
+	"rus":   "Russian",
+	"ja":    "Japanese",
+	"jpn":   "Japanese",
+	"ko":    "Korean",
+	"kor":   "Korean",
+	"zh":    "Chinese",
+	"chi":   "Chinese",
+	"zho":   "Chinese",
+	"yue":   "Cantonese",
+	"cmn":   "Mandarin",
+	"ar":    "Arabic",
+	"ara":   "Arabic",
+	"bn":    "Bengali",
+	"ben":   "Bengali",
+	"ta":    "Tamil",
+	"tam":   "Tamil",
+	"te":    "Telugu",
+	"tel":   "Telugu",
+	"mr":    "Marathi",
+	"mar":   "Marathi",
+	"ml":    "Malayalam",
+	"mal":   "Malayalam",
+	"kn":    "Kannada",
+	"kan":   "Kannada",
+	"pa":    "Punjabi",
+	"pan":   "Punjabi",
+	"gu":    "Gujarati",
+	"guj":   "Gujarati",
+	"or":    "Odia",
+	"ori":   "Odia",
+	"as":    "Assamese",
+	"asm":   "Assamese",
+	"ur":    "Urdu",
+	"urd":   "Urdu",
+	"ne":    "Nepali",
+	"nep":   "Nepali",
+	"si":    "Sinhala",
+	"sin":   "Sinhala",
+	"sa":    "Sanskrit",
+	"san":   "Sanskrit",
+	"id":    "Indonesian",
+	"ind":   "Indonesian",
+	"ms":    "Malay",
+	"may":   "Malay",
+	"msa":   "Malay",
+	"fil":   "Filipino",
+	"tl":    "Tagalog",
+	"tgl":   "Tagalog",
+	"th":    "Thai",
+	"tha":   "Thai",
+	"vi":    "Vietnamese",
+	"vie":   "Vietnamese",
+	"my":    "Burmese",
+	"bur":   "Burmese",
+	"mya":   "Burmese",
+	"km":    "Khmer",
+	"khm":   "Khmer",
+	"lo":    "Lao",
+	"lao":   "Lao",
+	"tr":    "Turkish",
+	"tur":   "Turkish",
+	"fa":    "Persian",
+	"per":   "Persian",
+	"fas":   "Persian",
+	"he":    "Hebrew",
+	"heb":   "Hebrew",
+	"iw":    "Hebrew",
+	"el":    "Greek",
+	"gre":   "Greek",
+	"ell":   "Greek",
+	"nl":    "Dutch",
+	"dut":   "Dutch",
+	"nld":   "Dutch",
+	"vls":   "Flemish",
+	"sv":    "Swedish",
+	"swe":   "Swedish",
+	"no":    "Norwegian",
+	"nor":   "Norwegian",
+	"nb":    "Norwegian Bokmål",
+	"nob":   "Norwegian Bokmål",
+	"nn":    "Norwegian Nynorsk",
+	"nno":   "Norwegian Nynorsk",
+	"da":    "Danish",
+	"dan":   "Danish",
+	"fi":    "Finnish",
+	"fin":   "Finnish",
+	"is":    "Icelandic",
+	"ice":   "Icelandic",
+	"isl":   "Icelandic",
+	"pl":    "Polish",
+	"pol":   "Polish",
+	"cs":    "Czech",
+	"cze":   "Czech",
+	"ces":   "Czech",
+	"sk":    "Slovak",
+	"slo":   "Slovak",
+	"slk":   "Slovak",
+	"hu":    "Hungarian",
+	"hun":   "Hungarian",
+	"ro":    "Romanian",
+	"rum":   "Romanian",
+	"ron":   "Romanian",
+	"bg":    "Bulgarian",
+	"bul":   "Bulgarian",
+	"sr":    "Serbian",
+	"srp":   "Serbian",
+	"scc":   "Serbian",
+	"hr":    "Croatian",
+	"hrv":   "Croatian",
+	"scr":   "Croatian",
+	"bs":    "Bosnian",
+	"bos":   "Bosnian",
+	"sl":    "Slovenian",
+	"slv":   "Slovenian",
+	"mk":    "Macedonian",
+	"mac":   "Macedonian",
+	"mkd":   "Macedonian",
+	"sq":    "Albanian",
+	"alb":   "Albanian",
+	"sqi":   "Albanian",
+	"uk":    "Ukrainian",
+	"ukr":   "Ukrainian",
+	"be":    "Belarusian",
+	"bel":   "Belarusian",
+	"lt":    "Lithuanian",
+	"lit":   "Lithuanian",
+	"lv":    "Latvian",
+	"lav":   "Latvian",
+	"et":    "Estonian",
+	"est":   "Estonian",
+	"ka":    "Georgian",
+	"geo":   "Georgian",
+	"kat":   "Georgian",
+	"hy":    "Armenian",
+	"arm":   "Armenian",
+	"hye":   "Armenian",
+	"az":    "Azerbaijani",
+	"aze":   "Azerbaijani",
+	"kk":    "Kazakh",
+	"kaz":   "Kazakh",
+	"uz":    "Uzbek",
+	"uzb":   "Uzbek",
+	"mn":    "Mongolian",
+	"mon":   "Mongolian",
+	"ca":    "Catalan",
+	"cat":   "Catalan",
+	"eu":    "Basque",
+	"baq":   "Basque",
+	"eus":   "Basque",
+	"gl":    "Galician",
+	"glg":   "Galician",
+	"cy":    "Welsh",
+	"wel":   "Welsh",
+	"cym":   "Welsh",
+	"ga":    "Irish",
+	"gle":   "Irish",
+	"gd":    "Scottish Gaelic",
+	"gla":   "Scottish Gaelic",
+	"sw":    "Swahili",
+	"swa":   "Swahili",
+	"am":    "Amharic",
+	"amh":   "Amharic",
+	"so":    "Somali",
+	"som":   "Somali",
+	"yo":    "Yoruba",
+	"yor":   "Yoruba",
+	"ha":    "Hausa",
+	"hau":   "Hausa",
+	"ig":    "Igbo",
+	"ibo":   "Igbo",
+	"zu":    "Zulu",
+	"zul":   "Zulu",
+	"xh":    "Xhosa",
+	"xho":   "Xhosa",
+	"af":    "Afrikaans",
+	"afr":   "Afrikaans",
+	"mg":    "Malagasy",
+	"mlg":   "Malagasy",
+	"la":    "Latin",
+	"lat":   "Latin",
+	"eo":    "Esperanto",
+	"epo":   "Esperanto",
+	"lb":    "Luxembourgish",
+	"ltz":   "Luxembourgish",
+	"mt":    "Maltese",
+	"mlt":   "Maltese",
+	"fo":    "Faroese",
+	"fao":   "Faroese",
+	"ps":    "Pashto",
+	"pus":   "Pashto",
+	"ku":    "Kurdish",
+	"kur":   "Kurdish",
+	"bo":    "Tibetan",
+	"tib":   "Tibetan",
+	"bod":   "Tibetan",
+	"ug":    "Uyghur",
+	"uig":   "Uyghur",
+	"ht":    "Haitian Creole",
+	"hat":   "Haitian Creole",
+	"sgn":   "Sign language",
+	"zxx":   "No language",
+	"mul":   "Multiple languages",
+	"und":   "Unknown",
 }
 
 func langName(code string) string {
-	if n, ok := langNames[strings.ToLower(code)]; ok {
+	c := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(code, "_", "-")))
+	if n, ok := langNames[c]; ok {
 		return n
+	}
+	if base, _, ok := strings.Cut(c, "-"); ok {
+		if n, ok := langNames[base]; ok {
+			return n
+		}
+	}
+	// Some files spell the language out ("English", "Hindi").
+	for _, n := range langNames {
+		if strings.EqualFold(n, c) {
+			return n
+		}
 	}
 	if code == "" {
 		return "Unknown"
 	}
 	return strings.ToUpper(code)
+}
+
+var junkTitleRe = regexp.MustCompile(`(?i)(https?://|www\.|@|\.(com|in|net|org|io|me|co|to|cc|tv|xyz|site|info|club|link|ws|lol|ai)\b|t\.me/|telegram)`)
+
+// trackLabel names an audio or subtitle track for people: "English",
+// "Hindi · Commentary", "English · SDH". Track titles are kept only when they
+// add something; release-group tags such as "MoviesMod.ai.in", or one title
+// repeated on every track, are dropped in favour of the language.
+func trackLabel(lang, title string, allTitles []string, fallback string, extra ...string) string {
+	name := ""
+	if l := strings.ToLower(strings.TrimSpace(lang)); l != "" && l != "und" {
+		name = langName(l)
+	}
+	t := strings.TrimSpace(title)
+	same := 0
+	for _, o := range allTitles {
+		if strings.EqualFold(strings.TrimSpace(o), t) {
+			same++
+		}
+	}
+	useful := t != "" && !junkTitleRe.MatchString(t) && !(same > 1 && len(allTitles) > 1) && len([]rune(t)) <= 40
+	if useful && name != "" && (strings.EqualFold(t, name) || strings.EqualFold(t, lang)) {
+		useful = false // "English" titled "English" or "eng"
+	}
+	switch {
+	case name == "" && useful:
+		name = t
+	case name == "":
+		name = fallback
+	case useful:
+		extra = append([]string{t}, extra...)
+	}
+	for _, e := range extra {
+		if !strings.Contains(strings.ToLower(name), strings.ToLower(e)) {
+			name += " · " + e
+		}
+	}
+	return name
+}
+
+// dedupeLabels turns ["English", "English"] into ["English", "English 2"].
+func dedupeLabels(in []string) []string {
+	count := map[string]int{}
+	for _, l := range in {
+		count[l]++
+	}
+	seen := map[string]int{}
+	out := make([]string, len(in))
+	for i, l := range in {
+		if count[l] > 1 {
+			seen[l]++
+			if seen[l] > 1 {
+				out[i] = fmt.Sprintf("%s %d", l, seen[l])
+				continue
+			}
+		}
+		out[i] = l
+	}
+	return out
 }

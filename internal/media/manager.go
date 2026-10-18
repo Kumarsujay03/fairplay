@@ -80,6 +80,11 @@ type Manager struct {
 	statuses map[string]*Status
 	running  *job
 	OnUpdate func(Status)
+	// MaxCache caps the cache folder in bytes; older prepared videos are
+	// removed after each finished encode. 0 means no limit.
+	MaxCache int64
+	// Current returns the room's video so pruning never removes it.
+	Current func() string
 }
 
 type job struct {
@@ -220,6 +225,18 @@ func (m *Manager) Prepare(id string) error {
 	return nil
 }
 
+// Cancel stops preparing id if it is being encoded right now. A finished
+// encode stays in the cache.
+func (m *Manager) Cancel(id string) {
+	m.mu.Lock()
+	j := m.running
+	m.mu.Unlock()
+	if j != nil && j.id == id {
+		j.cancel()
+		<-j.done
+	}
+}
+
 // Stop cancels any running encode (used on shutdown).
 func (m *Manager) Stop() {
 	m.mu.Lock()
@@ -275,15 +292,21 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 		}
 	}
 	var at []AudioTrack
+	var alabels []string
+	atitles := make([]string, len(audio))
 	for i, a := range audio {
-		label := a.Title
-		if label == "" {
-			label = langName(a.Lang)
+		atitles[i] = a.Title
+	}
+	for i, a := range audio {
+		var extra []string
+		if a.Comment {
+			extra = append(extra, "Commentary")
 		}
-		if label == "Unknown" {
-			label = fmt.Sprintf("Track %d", i+1)
-		}
-		at = append(at, AudioTrack{Index: i, Label: label, Lang: safeLang(a.Lang)})
+		alabels = append(alabels, trackLabel(a.Lang, a.Title, atitles, fmt.Sprintf("Track %d", i+1), extra...))
+	}
+	alabels = dedupeLabels(alabels)
+	for i, a := range audio {
+		at = append(at, AudioTrack{Index: i, Label: alabels[i], Lang: safeLang(a.Lang)})
 	}
 	var rn []string
 	for _, r := range rungs {
@@ -359,6 +382,17 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 		_ = os.WriteFile(filepath.Join(dir, "status.json"), b, 0o600)
 		_ = os.WriteFile(filepath.Join(dir, ".done"), nil, 0o600)
 	}
+	if m.MaxCache > 0 {
+		cur := ""
+		if m.Current != nil {
+			cur = m.Current()
+		}
+		go func() {
+			if freed := m.Prune(m.MaxCache, cur); freed > 0 {
+				log.Printf("media: freed %.1f GB of older prepared videos (cache limit %.0f GB)", float64(freed)/1e9, float64(m.MaxCache)/1e9)
+			}
+		}()
+	}
 }
 
 func (m *Manager) extractSubs(ctx context.Context, dir string, it Item, info Info) []SubTrack {
@@ -370,12 +404,20 @@ func (m *Manager) extractSubs(ctx context.Context, dir string, it Item, info Inf
 		if err := cmd.Run(); err != nil {
 			log.Printf("media: subtitles for %s: %v", it.RelPath, err)
 		} else {
-			for _, s := range keep {
-				label := s.Title
-				if label == "" {
-					label = langName(s.Lang)
+			titles := make([]string, len(keep))
+			for i, s := range keep {
+				titles[i] = s.Title
+			}
+			for i, s := range keep {
+				var extra []string
+				if s.Forced {
+					extra = append(extra, "Forced")
+				}
+				if s.SDH {
+					extra = append(extra, "SDH")
 				}
 				id := fmt.Sprintf("sub_%d", s.Index)
+				label := trackLabel(s.Lang, s.Title, titles, fmt.Sprintf("Subtitles %d", i+1), extra...)
 				out = append(out, SubTrack{ID: id, Label: label, Lang: safeLang(s.Lang), URL: id + ".vtt"})
 			}
 		}
@@ -393,6 +435,13 @@ func (m *Manager) extractSubs(ctx context.Context, dir string, it Item, info Inf
 		out = append(out, SubTrack{ID: id, Label: label, Lang: safeLang(lang), URL: id + ".vtt"})
 	}
 	if len(out) > 0 {
+		labels := make([]string, len(out))
+		for i, s := range out {
+			labels[i] = s.Label
+		}
+		for i, l := range dedupeLabels(labels) {
+			out[i].Label = l
+		}
 		m.update(it.ID, func(s *Status) { s.Subs = out })
 	}
 	return out
@@ -413,6 +462,7 @@ func (m *Manager) loadCachedLocked(it Item) (Status, bool) {
 	}
 	st.ID, st.Name, st.key = it.ID, it.Name, cacheKey(it)
 	m.statuses[it.ID] = &st
+	touch(dir)
 	return st, true
 }
 
