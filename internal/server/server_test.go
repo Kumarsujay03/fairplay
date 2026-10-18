@@ -144,6 +144,7 @@ type fixture struct {
 	hub   *hub.Hub
 	mm    *media.Manager
 	ids   []string
+	app   *Server
 }
 
 func setup(t *testing.T) *fixture {
@@ -177,7 +178,7 @@ func setup(t *testing.T) *fixture {
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
 	t.Cleanup(mm.Stop)
-	f := &fixture{srv: srv, store: store, hub: h, mm: mm}
+	f := &fixture{srv: srv, store: store, hub: h, mm: mm, app: s}
 	for _, it := range items {
 		f.ids = append(f.ids, it.ID)
 	}
@@ -554,5 +555,27 @@ func TestHostAPIListsAreNeverNull(t *testing.T) {
 	code, out := host.do("POST", "/api/host/storage/clear", map[string]any{}, true)
 	if code != 200 || out["items"] == nil {
 		t.Errorf("storage/clear: %d items=%v", code, out["items"])
+	}
+}
+
+func TestStopFromConsoleIsHostOnly(t *testing.T) {
+	f := setup(t)
+	stopped := make(chan struct{}, 1)
+	f.app.Shutdown = func() { stopped <- struct{}{} }
+	stranger := newClient(t, f.srv.URL)
+	if code, _ := stranger.do("POST", "/api/host/shutdown", map[string]any{}, true); code != 404 {
+		t.Fatalf("a stranger must not stop FairPlay, got %d", code)
+	}
+	host := hostLogin(t, f)
+	if code, _ := host.do("POST", "/api/host/shutdown", map[string]any{}, false); code != 403 {
+		t.Fatalf("a cross-site request must not stop FairPlay, got %d", code)
+	}
+	if code, _ := host.do("POST", "/api/host/shutdown", map[string]any{}, true); code != 200 {
+		t.Fatalf("host stop: %d", code)
+	}
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+		t.Fatal("shutdown was not called")
 	}
 }

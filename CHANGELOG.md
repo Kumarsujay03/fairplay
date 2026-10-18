@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 (2026-10-18)
+
+- Reactions now float over the chat instead of under it, with a bouncy pop-in, sway and wobble as they rise
+- **Stop FairPlay** button in the host console: ends the room, tells every viewer, and closes FairPlay on the host's computer
+- The player's host-console button is now a settings gear
+
 ## 0.1.1 (2026-10-18)
 
 - Wide films (for example 1920×800) are now prepared up to 1080p instead of 720p, never upscaled, with bitrate matched to the picture

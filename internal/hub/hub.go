@@ -175,11 +175,14 @@ func (h *Hub) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
+			// Tell everyone the room is over before the sockets close.
 			h.mu.Lock()
 			for c := range h.clients {
-				c.close("server shutting down")
+				c.writeLocked(msg{"t": "kicked", "reason": "The host closed FairPlay. The room has ended."})
+				c.close("FairPlay stopped")
 			}
 			h.mu.Unlock()
+			time.Sleep(300 * time.Millisecond) // let the goodbye reach browsers
 			return
 		case <-h.signal:
 			h.drainSignals()
