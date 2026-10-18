@@ -72,13 +72,21 @@ FairPlay is a single binary you run on your own computer. It serves a small web 
 2. **Plan** up to three rungs by the picture's long side: 1920, 1280 and 854 px for 1080p, 720p and 480p. A 1920×800 film is therefore 1080p, and portrait videos are classed by their height. Rungs never upscale, and bitrate scales with the picture area. 4K sources top out at 1080p to keep the encoder light.
 3. **Transcode** to fMP4 HLS in 4-second segments. Every rung is encoded with keyframes forced at the same 4-second marks, so quality switches are seamless. Interlaced sources are deinterlaced, and HDR sources are tonemapped to SDR when the ffmpeg build has zscale. Audio becomes stereo AAC, up to six tracks. FairPlay detects NVENC, Quick Sync or VideoToolbox with a test encode and falls back to libx264 `veryfast`. ffmpeg runs at lower priority so the host's own playback stays smooth.
 4. **Play while encoding.** ffmpeg writes the master playlist within seconds and grows the variant playlists as it goes. The room can start after about 12 seconds are encoded. If playback catches up to the encoder, the room pauses briefly with the reason shown, then resumes automatically.
-5. **Cache** by file path, size, modification time and ladder version, so a second showing starts instantly and a new ladder prepares files again. The cache is capped at 20 GB by default (`-cache-max`), and the least recently used prepared videos are removed after each finished encode and at start. The video in use and the one still encoding are never removed.
+5. **Cache** by file path, size, modification time and ladder version, so a second showing starts instantly and a new ladder prepares files again. The cache is capped at 40 GB by default (`-cache-max`), and the least recently used prepared videos are removed after each finished encode and at start. The video in use and the one still encoding are never removed.
 
 **Track names** come from the language tag: English, Hindi, Indonesian, from an ISO 639 table of about 90 languages. Titles are kept only when they add information, such as SDH, Forced or Commentary. A title repeated on every track, or one that looks like a website or release group, is ignored. Duplicates are numbered.
 
 **Track choice.** The host sets the room's audio, subtitles and quality. They reset when the video changes, and every player follows them. A viewer can override any of the three for their own screen. Auto quality is limited by the player's on-screen size times the device's pixel density, then by bandwidth, so phones settle at 720p and laptops at 1080p.
 
 Only the exact file names ffmpeg produces can be served, enforced by an allowlist regex. Guests can only reach the file the room is currently showing.
+
+### Animated reactions
+
+Reactions are [Noto Emoji Animation](https://googlefonts.github.io/noto-emoji-animation/), under CC BY 4.0. `tools/emoji-index` builds `internal/emoji/index.json`, which lists 611 animated emoji with skin-tone variants left out. It also converts the 12 most used into small animated WebP files that are bundled into the binary, 648 KB in total.
+
+When someone sends any other emoji, the host's FairPlay downloads its GIF from Google's emoji CDN once. It converts it with ffmpeg (96 px, 15 fps) and caches it in `<cache>/emoji`. Only one download runs per emoji, and at most two at once. Guests only ever fetch from the host. The server accepts only codes from the index, so `/emoji/<code>.webp` can't be used to fetch anything else.
+
+In the player, the plain emoji shows at once and the animation replaces it as soon as it loads, so an offline host still shows reactions. Each reaction pops in with a springy bounce and a burst of mini emoji, then drifts up over the chat. Only transform and opacity animate, and at most 10 run at once.
 
 ## 5. Ping and sync
 
@@ -90,6 +98,8 @@ The server is the clock. Clients never trust their own wall time.
 - **Jitter** is the spread between the quartiles. High jitter widens the drift tolerance so a shaky link is not corrected constantly.
 
 **The room state** is one anchor: at server time `anchor`, the video is at `pos` seconds and advances at `rate` while playing. Every viewer derives the same position from that anchor, so the server never streams time ticks.
+
+**Viewers never get ahead of the room.** Seeking and skipping are capped at the room position, where encoded chunks are known to exist. A solo viewer who catches up rejoins the room automatically, and the seek bar shades the part they can't reach yet.
 
 **Following the room.** Every 250 ms the player compares its playhead to the room position.
 - Below the tolerance (80 ms, more on jittery links): nothing happens.
@@ -121,7 +131,7 @@ No link can prove *who* opened it. FairPlay uses three layers that honest guests
 - **Sessions.** Cookies are HttpOnly and SameSite=Strict, and marked Secure behind the tunnel. Every `/hls`, `/ws` and `/api` call checks the session.
 - **CSRF.** Every write must carry a matching `Origin` and a JSON content type. Bodies are capped at 8 KB.
 - **WebSocket.** The origin is checked, messages are capped at 32 KB, and messages are decoded into typed fields. Unknown types are ignored. Chat is limited to a burst of 5 then 1/s, and reactions to a burst of 6 then 3/s.
-- **Input.** Names are cleaned to 1–24 printable characters and messages to 500. Everything renders as text, never as HTML.
+- **Input.** Names are cleaned to 1–24 printable characters and messages to 200. Everything renders as text, never as HTML.
 - **Headers.** A strict CSP with no inline scripts and `frame-ancestors 'none'`, plus nosniff, `Referrer-Policy: no-referrer`, a permissions policy and HSTS behind TLS.
 - **Filesystem.** Media is served only from the chosen folder. Symlinks are resolved and must stay inside it, and there is no directory listing.
 

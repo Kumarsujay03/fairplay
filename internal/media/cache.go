@@ -25,7 +25,7 @@ func CacheUsage(dir string) ([]CacheEntry, int64) {
 	out := []CacheEntry{} // never nil: an empty cache is [] in JSON
 	var total int64
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() || e.Name() == "emoji" { // reaction animations live next to the videos
 			continue
 		}
 		p := filepath.Join(dir, e.Name())

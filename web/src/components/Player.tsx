@@ -28,6 +28,7 @@ export function Player() {
   const [muted, setMuted] = useState(false)
   const [volume, setVolume] = useState(1)
   const [blocked, setBlocked] = useState(false)
+  const [soundOff, setSoundOff] = useState(false) // started muted because the browser blocked sound
   const [levels, setLevels] = useState<Level[]>([])
   const [autoLevel, setAutoLevel] = useState('')
   const [audioCount, setAudioCount] = useState(0)
@@ -45,6 +46,10 @@ export function Player() {
   const [showUi, setShowUi] = useState(true)
   const [isFs, setIsFs] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
+  const [inPip, setInPip] = useState(false)
+  const pipSupported =
+    (typeof document !== 'undefined' && !!document.pictureInPictureEnabled) ||
+    typeof (HTMLVideoElement.prototype as any).webkitSetPresentationMode === 'function'
   const [compact, setCompact] = useState(() => matchMedia('(max-width: 720px) and (orientation: portrait)').matches)
 
   const st = S.room.value
@@ -62,6 +67,7 @@ export function Player() {
     const e = new SyncEngine(v, socket.clock, () => S.room.value, () => S.media.value?.duration || 0)
     e.onReport = setReport
     e.onBlocked = setBlocked
+    e.onMutedStart = () => setSoundOff(true)
     engine.current = e
     e.start()
 
@@ -89,6 +95,10 @@ export function Player() {
     v.addEventListener('play', onPlay)
     v.addEventListener('timeupdate', onTime)
     v.addEventListener('volumechange', onVol)
+    const onPipIn = () => setInPip(true)
+    const onPipOut = () => setInPip(false)
+    v.addEventListener('enterpictureinpicture', onPipIn)
+    v.addEventListener('leavepictureinpicture', onPipOut)
     try {
       const saved = parseFloat(localStorage.getItem('fp.volume') || '')
       if (saved >= 0 && saved <= 1) v.volume = saved
@@ -109,6 +119,8 @@ export function Player() {
       v.removeEventListener('play', onPlay)
       v.removeEventListener('timeupdate', onTime)
       v.removeEventListener('volumechange', onVol)
+      v.removeEventListener('enterpictureinpicture', onPipIn)
+      v.removeEventListener('leavepictureinpicture', onPipOut)
       mq.removeEventListener('change', onMq)
       document.removeEventListener('fullscreenchange', onFs)
     }
@@ -232,6 +244,25 @@ export function Player() {
     }
   }, [sub, m?.subs?.length])
 
+  // A solo viewer who catches up with the room (by playing, or because the
+  // room paused) rejoins it automatically, so nobody drifts ahead.
+  const wasBehind = useRef(false)
+  useEffect(() => {
+    if (mode !== 'solo' || canControl || !S.room.value?.media) {
+      wasBehind.current = false
+      return
+    }
+    // Read the element itself: right after a seek the `cur` state is stale.
+    const t = videoRef.current?.currentTime ?? 0
+    const gap = report.target - t
+    if (gap > 1.5) wasBehind.current = true
+    if (wasBehind.current && !paused && gap <= 0.25) {
+      wasBehind.current = false
+      setMode('follow')
+      S.showToast('You caught up with the room')
+    }
+  }, [cur, report.target, mode, paused, canControl])
+
   // Auto-hide controls while playing
   useEffect(() => {
     if (!showUi || paused || menu || peersOpen) return
@@ -320,12 +351,26 @@ export function Player() {
     else v.pause()
   }
 
+  // How far a viewer may go. The host and co-hosts can go anywhere that is
+  // encoded; everyone else can go back but never ahead of the room, where
+  // chunks may not exist yet (and it would spoil the film).
+  function seekLimit(): number {
+    const encodedMax = m && m.state !== 'ready' ? Math.max(0, m.encoded - 2) : duration || Infinity
+    if (canControl) return encodedMax
+    return Math.min(encodedMax, engine.current?.target() ?? 0)
+  }
+
   function seekTo(t: number) {
     const v = videoRef.current!
-    const max = m && m.state !== 'ready' ? Math.max(0, m.encoded - 2) : duration || Infinity
-    t = Math.max(0, Math.min(t, max))
+    const limit = seekLimit()
+    t = Math.max(0, Math.min(t, limit))
     if (canControl && S.mode.value === 'follow') {
       socket.send({ t: 'cmd', op: 'seek', pos: t })
+      return
+    }
+    if (!canControl && t >= limit - 1) {
+      // Asked to go to (or past) where the room is: just rejoin it.
+      if (S.mode.value === 'solo') backToLive()
       return
     }
     setMode('solo')
@@ -340,6 +385,12 @@ export function Player() {
   function backToLive() {
     setMode('follow')
     S.showToast('Back with the room')
+  }
+
+  function unmute() {
+    const v = videoRef.current!
+    v.muted = false
+    setSoundOff(false)
   }
 
   function unblock() {
@@ -361,17 +412,27 @@ export function Player() {
   }
 
   async function togglePip() {
-    const v = videoRef.current!
+    const v = videoRef.current! as HTMLVideoElement & {
+      webkitSetPresentationMode?: (m: string) => void
+      webkitPresentationMode?: string
+    }
     try {
       if (document.pictureInPictureElement) await document.exitPictureInPicture()
-      else await v.requestPictureInPicture()
-    } catch {}
+      else if (typeof v.requestPictureInPicture === 'function' && document.pictureInPictureEnabled) await v.requestPictureInPicture()
+      else if (v.webkitSetPresentationMode) {
+        // Safari on iPhone and iPad
+        v.webkitSetPresentationMode(v.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture')
+      }
+    } catch (err) {
+      S.showToast(v.readyState < 1 ? 'Picture in picture works once the video is playing' : `Picture in picture is not available: ${(err as Error).message}`, 'error')
+    }
   }
 
   const setVol = (val: number) => {
     const v = videoRef.current!
     v.volume = val
     v.muted = val === 0
+    if (val > 0) setSoundOff(false)
     try {
       localStorage.setItem('fp.volume', String(val))
     } catch {}
@@ -432,7 +493,7 @@ export function Player() {
           playsInline
           preload="auto"
           disablePictureInPicture={false}
-          onClick={() => (compact ? setShowUi(!showUi) : togglePlay())}
+          onClick={() => (soundOff ? unmute() : compact ? setShowUi(!showUi) : togglePlay())}
           onDblClick={toggleFs}
         >
           {playable &&
@@ -483,6 +544,12 @@ export function Player() {
           onPlay={togglePlay}
         />
 
+        {soundOff && (
+          <button class="unmute-pill" onClick={unmute}>
+            <Icon name="mute" size={18} /> Sound is off · tap to unmute
+          </button>
+        )}
+
         <Reactions />
 
         {/* Chat */}
@@ -500,6 +567,7 @@ export function Player() {
             buffered={buffered}
             seekMax={seekMax || 0}
             room={mode === 'solo' ? report.target : -1}
+            limit={canControl ? -1 : Math.min(report.target, seekMax || Infinity)}
             onSeek={seekTo}
           />
           <div class="control-row">
@@ -513,7 +581,7 @@ export function Player() {
               <Icon name="fwd10" />
             </button>
             <div class="volume row">
-              <button class="icon-btn" onClick={() => (videoRef.current!.muted = !muted)} aria-label={muted ? 'Unmute' : 'Mute'}>
+              <button class="icon-btn" onClick={() => (soundOff ? unmute() : (videoRef.current!.muted = !muted))} aria-label={muted ? 'Unmute' : 'Mute'}>
                 <Icon name={muted || volume === 0 ? 'mute' : 'volume'} />
               </button>
               <input
@@ -536,7 +604,7 @@ export function Player() {
               title={mode === 'follow' ? 'You are watching with the room' : 'Jump back to the room'}
             >
               <Icon name="radio" size={16} />
-              {mode === 'follow' ? 'Live with room' : 'Watching solo'}
+              {compact ? (mode === 'follow' ? 'Live' : 'Solo') : mode === 'follow' ? 'Live with room' : 'Watching solo'}
             </button>
             {canControl && (
               <button
@@ -632,8 +700,8 @@ export function Player() {
                 </div>
               )}
             </div>
-            {'pictureInPictureEnabled' in document && !compact && (
-              <button class="icon-btn" onClick={togglePip} title="Picture in picture">
+            {pipSupported && (
+              <button class={`icon-btn ${inPip ? 'active' : ''}`} onClick={togglePip} title="Picture in picture" aria-label="Picture in picture">
                 <Icon name="pip" />
               </button>
             )}
@@ -779,15 +847,25 @@ function CenterOverlay(p: {
   return null
 }
 
-function Seekbar(p: { duration: number; current: number; buffered: number; seekMax: number; room: number; onSeek: (t: number) => void }) {
+function Seekbar(p: {
+  duration: number
+  current: number
+  buffered: number
+  seekMax: number
+  room: number
+  limit: number // viewers can't go past this (the room position); -1 = no limit
+  onSeek: (t: number) => void
+}) {
   const bar = useRef<HTMLDivElement>(null)
   const [hover, setHover] = useState<number | null>(null)
   const [drag, setDrag] = useState<number | null>(null)
+  const dragging = useRef(false)
   const d = p.duration || 1
   const pct = (t: number) => `${Math.max(0, Math.min(100, (t / d) * 100))}%`
   const at = (e: PointerEvent) => {
     const r = bar.current!.getBoundingClientRect()
-    return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * d
+    const t = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * d
+    return p.limit >= 0 ? Math.min(t, p.limit) : t
   }
   const shown = drag ?? p.current
   return (
@@ -801,15 +879,26 @@ function Seekbar(p: { duration: number; current: number; buffered: number; seekM
       aria-valuenow={Math.round(p.current)}
       tabIndex={0}
       onPointerDown={(e) => {
-        ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
+        try {
+          ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+        } catch {
+          // Some pointers (pens, synthetic events) can't be captured; dragging still works.
+        }
+        dragging.current = true
         setDrag(at(e))
       }}
       onPointerMove={(e) => {
         setHover(at(e))
-        if (drag !== null) setDrag(at(e))
+        if (dragging.current) setDrag(at(e))
       }}
       onPointerUp={(e) => {
-        if (drag !== null) p.onSeek(at(e))
+        // A ref, not state: a quick tap releases before the re-render.
+        if (dragging.current) p.onSeek(at(e))
+        dragging.current = false
+        setDrag(null)
+      }}
+      onPointerCancel={() => {
+        dragging.current = false
         setDrag(null)
       }}
       onPointerLeave={() => setHover(null)}
@@ -819,6 +908,9 @@ function Seekbar(p: { duration: number; current: number; buffered: number; seekM
         <div class="buffered" style={{ width: pct(p.buffered) }} />
         <div class="played" style={{ width: pct(shown) }} />
         {p.room >= 0 && <div class="room-mark" style={{ left: pct(p.room) }} title="Where the room is" />}
+        {p.limit >= 0 && p.limit < d - 1 && (
+          <div class="locked" style={{ left: pct(p.limit), width: `calc(100% - ${pct(p.limit)})` }} title="You can't go ahead of the room" />
+        )}
       </div>
       <div class="knob" style={{ left: pct(shown) }} />
       {hover !== null && (

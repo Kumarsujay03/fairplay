@@ -200,7 +200,11 @@ func (m *Manager) Prepare(id string) error {
 	}
 	m.mu.Lock()
 	if st, ok := m.statuses[id]; ok && (st.State == StateReady || st.State == StateEncoding || st.State == StateProbing) {
+		// Already known (for example listed from the cache): still announce it,
+		// so a room that just loaded this file learns it can play.
+		cp := *st
 		m.mu.Unlock()
+		m.emit(cp)
 		return nil
 	}
 	if st, ok := m.loadCachedLocked(it); ok && st.State == StateReady {
