@@ -47,15 +47,6 @@ function firstWord(msg: Uint8Array, len: number): number {
   return (a + 0x6a09e667) >>> 0
 }
 
-/** Full digest as hex, used by the self-test. */
-export function sha256hex(text: string): string {
-  // Only used for short test strings; reuse the block function by computing
-  // all 8 words is not needed for the search, so keep a tiny separate path.
-  const bytes = new TextEncoder().encode(text)
-  if (bytes.length >= 56) throw new Error('short messages only')
-  return firstWord(bytes, bytes.length).toString(16).padStart(8, '0')
-}
-
 export function search(salt: string, bits: number): string {
   const prefix = new TextEncoder().encode(salt + ':')
   const buf = new Uint8Array(64)

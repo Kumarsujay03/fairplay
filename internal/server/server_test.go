@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -154,7 +153,7 @@ func setup(t *testing.T) *fixture {
 	root := t.TempDir()
 	for i, name := range []string{"A Movie.mkv", "B Movie.mp4"} {
 		gen := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-			"-f", "lavfi", "-i", fmt.Sprintf("testsrc2=size=320x180:rate=24"), "-f", "lavfi", "-i", "sine=frequency=440",
+			"-f", "lavfi", "-i", "testsrc2=size=320x180:rate=24", "-f", "lavfi", "-i", "sine=frequency=440",
 			"-t", fmt.Sprint(6+i), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", filepath.Join(root, name))
 		if out, err := gen.CombinedOutput(); err != nil {
 			t.Fatalf("%v %s", err, out)
@@ -317,6 +316,42 @@ func TestFullRoomFlow(t *testing.T) {
 	}
 	gw.wait("err", func(m map[string]any) bool { return strings.Contains(m["text"].(string), "slow down") })
 
+	// Host hides chat from Priya: she stops receiving and cannot post.
+	hw.send(map[string]any{"t": "host", "op": "chat_hide", "sid": pending["id"], "on": true})
+	gw.wait("you", func(m map[string]any) bool { return m["you"].(map[string]any)["chat"] == false })
+	hw.send(map[string]any{"t": "chat", "text": "secret plan"})
+	hw.wait("chat", func(m map[string]any) bool { return m["m"].(map[string]any)["text"] == "secret plan" })
+	time.Sleep(1500 * time.Millisecond) // let her rate limit refill too
+	gw.send(map[string]any{"t": "chat", "text": "can I talk?"})
+	gw.wait("err", func(m map[string]any) bool { return strings.Contains(m["text"].(string), "turned off chat") })
+	drainForChat := func() bool {
+		for {
+			select {
+			case m := <-gw.in:
+				if m["t"] == "chat" {
+					return true
+				}
+			default:
+				return false
+			}
+		}
+	}
+	if drainForChat() {
+		t.Fatal("a viewer with chat hidden must not receive chat messages")
+	}
+	hw.send(map[string]any{"t": "host", "op": "chat_hide", "sid": pending["id"], "on": false})
+	gw.wait("you", func(m map[string]any) bool { return m["you"].(map[string]any)["chat"] == true })
+	hist := gw.wait("chathist", nil)
+	found := false
+	for _, c := range hist["chat"].([]any) {
+		if c.(map[string]any)["text"] == "secret plan" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("showing chat again should restore the history")
+	}
+
 	// Peers carry ping.
 	gw.send(map[string]any{"t": "status", "mode": "solo", "rtt": 212, "jit": 9, "pos": 1.5})
 	hw.wait("peers", func(m map[string]any) bool {
@@ -449,8 +484,4 @@ func TestRateLimitPerIP(t *testing.T) {
 	if code, _ := other.do("GET", "/api/challenge", nil, false); code != 200 {
 		t.Fatalf("a different visitor must not be affected, got %d", code)
 	}
-}
-
-func TestMain(m *testing.M) {
-	os.Exit(m.Run())
 }

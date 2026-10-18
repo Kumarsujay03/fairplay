@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 	"unicode"
-	"unicode/utf8"
 )
 
 type Role string
@@ -444,16 +443,6 @@ func (s *Store) Lookup(cookie string) (Session, bool) {
 	return *sess, true
 }
 
-func (s *Store) Get(sessionID string) (Session, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sess, ok := s.byID[sessionID]
-	if !ok {
-		return Session{}, false
-	}
-	return *sess, true
-}
-
 // Pending lists the lobby, oldest first.
 func (s *Store) Pending() []Session {
 	s.mu.Lock()
@@ -686,6 +675,3 @@ func randID() string {
 	}
 	return base64.RawURLEncoding.EncodeToString(b)
 }
-
-// ValidName reports whether a cleaned name is usable.
-func ValidName(s string) bool { return s != "" && utf8.RuneCountInString(s) <= 24 }

@@ -58,9 +58,20 @@ export function Peers({ onClose }: { onClose: () => void }) {
               <div class="grow col tight">
                 <div class="row">
                   <span class="ellipsis">{p.name}</span>
-                  {p.id === me?.id && <span class="caption muted">(you)</span>}
+                  {p.id === me?.id && (
+                    <button
+                      class="caption link-btn"
+                      onClick={() => {
+                        const n = prompt('Your display name', p.name)?.trim()
+                        if (n) socket.send({ t: 'rename', name: n })
+                      }}
+                    >
+                      (you · rename)
+                    </button>
+                  )}
                   {p.role === 'host' && <span class="tag neutral">Host</span>}
                   {p.cohost && <span class="tag warn">Co-host</span>}
+                  {p.chatOff && <span class="tag neutral">chat hidden</span>}
                 </div>
                 <div class="row caption">
                   <span class={`tag ${s.cls}`}>{s.text}</span>
@@ -70,6 +81,13 @@ export function Peers({ onClose }: { onClose: () => void }) {
               </div>
               {host && p.role !== 'host' && (
                 <div class="row">
+                  <button
+                    class="icon-btn sm plain"
+                    title={p.chatOff ? 'Show chat to them again' : 'Hide chat from them'}
+                    onClick={() => socket.send({ t: 'host', op: 'chat_hide', sid: p.id, on: !p.chatOff })}
+                  >
+                    <Icon name={p.chatOff ? 'chat' : 'chatOff'} size={16} />
+                  </button>
                   <button
                     class={`btn btn-sm ${p.cohost ? 'btn-primary' : 'btn-ghost'}`}
                     title="Let them control playback for everyone"

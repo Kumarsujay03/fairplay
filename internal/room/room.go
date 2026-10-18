@@ -49,8 +49,6 @@ func New() *Room { return &Room{st: State{Rate: 1, Reason: ReasonLoading}} }
 
 func (r *Room) State() State { return r.st }
 
-func (r *Room) Duration() float64 { return r.duration }
-
 // Load switches media. The room starts paused at zero.
 func (r *Room) Load(now int64, mediaID string, duration float64, by string) State {
 	r.st = State{MediaID: mediaID, Rate: 1, Anchor: now, Reason: ReasonLoading, By: by, Version: r.st.Version}

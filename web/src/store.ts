@@ -36,6 +36,7 @@ export interface Peer {
   name: string
   role: 'host' | 'guest'
   cohost?: boolean
+  chatOff?: boolean
   mode: 'follow' | 'solo'
   buf: boolean
   rtt: number
@@ -60,6 +61,7 @@ export interface You {
   name: string
   role: 'host' | 'guest'
   control: boolean
+  chat: boolean
 }
 
 export interface Pending {
