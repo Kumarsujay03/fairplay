@@ -4,29 +4,58 @@ import { socket } from '../socket'
 import { Icon } from './Icons'
 import { REACTIONS, MORE_REACTIONS, colorFor } from '../util'
 
-const VISIBLE = 4
 const IDLE_FADE_MS = 12000
+const NEAR_BOTTOM = 24 // px from the bottom that still counts as "following" the chat
 
 // Floating chat. The panel itself is transparent; only bubbles have a
-// background. Shows the last four messages, older ones fade, and the whole
-// stack fades after a quiet spell unless you hover or type.
+// background. About four messages fit; scroll up (wheel or swipe, no visible
+// scrollbar) to read the whole session. New messages don't pull you down while
+// you are reading older ones; a pill offers to jump back. The stack fades after
+// a quiet spell unless you hover, type or are scrolled up.
 export function Chat({ compact = false, open = true }: { compact?: boolean; open?: boolean }) {
   const [text, setText] = useState('')
   const [idle, setIdle] = useState(false)
   const [hover, setHover] = useState(false)
   const [focus, setFocus] = useState(false)
   const [more, setMore] = useState(false)
+  const [following, setFollowing] = useState(true)
+  const [unread, setUnread] = useState(0)
+  const lastCount = useRef(0)
   const input = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLDivElement>(null)
   const msgs = chat.value
   const me = you.value?.id
 
+  const toBottom = (smooth = false) => {
+    const el = list.current
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' })
+    setFollowing(true)
+    setUnread(0)
+  }
+
   useEffect(() => {
     setIdle(false)
     const t = setTimeout(() => setIdle(true), IDLE_FADE_MS)
-    if (compact && list.current) list.current.scrollTop = list.current.scrollHeight
+    const added = msgs.length - lastCount.current
+    lastCount.current = msgs.length
+    const newest = msgs[msgs.length - 1]
+    if (following || (newest && newest.sid === me) || added < 0 || added > 20) {
+      // Following the chat, or you just sent, or history was replaced: stick to the bottom.
+      requestAnimationFrame(() => toBottom(added === 1))
+    } else if (added > 0) {
+      setUnread((n) => n + added)
+    }
     return () => clearTimeout(t)
-  }, [msgs.length])
+  }, [msgs.length, msgs[0]?.id])
+
+  const onScroll = () => {
+    const el = list.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM
+    setFollowing(atBottom)
+    if (atBottom) setUnread(0)
+    setIdle(false)
+  }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -50,8 +79,8 @@ export function Chat({ compact = false, open = true }: { compact?: boolean; open
   const react = (emoji: string) => socket.send({ t: 'react', e: emoji })
 
   const chatOn = you.value?.chat !== false
-  const shown = !chatOn ? [] : compact ? msgs : msgs.slice(-VISIBLE)
-  const faded = !compact && idle && !hover && !focus
+  const shown = chatOn ? msgs : []
+  const faded = !compact && idle && !hover && !focus && following
 
   if (!open && !compact) return null
 
@@ -61,20 +90,18 @@ export function Chat({ compact = false, open = true }: { compact?: boolean; open
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
-      <div class="chat-list" ref={list} aria-live="polite">
-        {shown.map((m, i) => {
+      <div class={`chat-list ${following ? '' : 'scrolled'}`} ref={list} aria-live="polite" onScroll={onScroll}>
+        {shown.map((m) => {
           const self = m.sid === me
-          const age = shown.length - 1 - i
-          const opacity = compact ? 1 : age >= VISIBLE - 1 ? 0.5 : 1
           if (m.sys) {
             return (
-              <div class="bubble-row sys" key={m.id} style={{ opacity }}>
+              <div class="bubble-row sys" key={m.id}>
                 <span class="sys-msg">{m.text}</span>
               </div>
             )
           }
           return (
-            <div class={`bubble-row ${self ? 'self' : ''}`} key={m.id} style={{ opacity }}>
+            <div class={`bubble-row ${self ? 'self' : ''}`} key={m.id}>
               <div class={`bubble ${self ? 'self' : 'other'}`}>
                 <div class="bubble-name" style={self ? undefined : { color: colorFor(m.sid) }}>
                   {self ? 'You' : m.name}
@@ -85,6 +112,11 @@ export function Chat({ compact = false, open = true }: { compact?: boolean; open
           )
         })}
       </div>
+      {unread > 0 && (
+        <button class="new-pill" onClick={() => toBottom(true)}>
+          {unread} new message{unread === 1 ? '' : 's'} ↓
+        </button>
+      )}
       {!chatOn && <div class="chat-off caption">The host has turned off chat for you</div>}
       {chatOn && (
       <form class="composer" onSubmit={send}>

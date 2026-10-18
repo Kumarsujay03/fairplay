@@ -8,7 +8,7 @@ import { Chat } from './Chat'
 import { Reactions } from './Reactions'
 import { Peers, ViewerStack } from './Peers'
 import { LobbyToasts } from './Lobby'
-import { fmtGap, fmtTime, navigate, pingClass } from '../util'
+import { fmtGap, fmtTime, navigate, pingClass, qualityLabel, qualityName } from '../util'
 
 interface Level {
   index: number
@@ -29,11 +29,16 @@ export function Player() {
   const [volume, setVolume] = useState(1)
   const [blocked, setBlocked] = useState(false)
   const [levels, setLevels] = useState<Level[]>([])
-  const [level, setLevel] = useState(-1)
   const [autoLevel, setAutoLevel] = useState('')
-  const [audio, setAudio] = useState(0)
   const [audioCount, setAudioCount] = useState(0)
-  const [sub, setSub] = useState('')
+  // Personal overrides. null = follow the host's choice for the room.
+  const [myQ, setMyQ] = useState<string | null>(null)
+  const [myAudio, setMyAudio] = useState<number | null>(null)
+  const [mySub, setMySub] = useState<string | null>(null)
+  const room = S.prefs.value
+  const quality = myQ ?? room.quality
+  const audio = myAudio ?? room.audio
+  const sub = mySub ?? room.sub
   const [menu, setMenu] = useState(false)
   const [peersOpen, setPeersOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(true)
@@ -124,7 +129,7 @@ export function Player() {
       rtt: socket.clock.rtt,
       jit: socket.clock.jitter,
       drift: Math.round(r.drift * 1000),
-      q: lv ? `${lv.height}p` : '',
+      q: lv ? qualityName(lv.width, lv.height) : '',
     })
   }
 
@@ -136,9 +141,9 @@ export function Player() {
     let cancelled = false
     let hls: Hls | null = null
     setLevels([])
-    setLevel(-1)
-    setAudio(0)
-    setSub('')
+    setMyQ(null)
+    setMyAudio(null)
+    setMySub(null)
 
     const useNative = !('MediaSource' in window || 'ManagedMediaSource' in window) && v.canPlayType('application/vnd.apple.mpegurl')
     if (useNative) {
@@ -153,17 +158,26 @@ export function Player() {
           maxBufferLength: 30,
           maxMaxBufferLength: 60,
           backBufferLength: 30,
-          capLevelToPlayerSize: true,
+          capLevelToPlayerSize: true, // phones settle at 720p, laptops at 1080p (pixel density counted)
+          ignoreDevicePixelRatio: false,
           liveDurationInfinity: false,
           abrEwmaDefaultEstimate: 3_000_000,
         })
         hlsRef.current = hls
         hls.on(HlsCtor.Events.MANIFEST_PARSED, () => {
-          setLevels(hls!.levels.map((l, i) => ({ index: i, name: `${l.height}p` })).sort((a, b) => parseInt(b.name) - parseInt(a.name)))
+          setLevels(
+            hls!.levels
+              .map((l, i) => ({ index: i, name: qualityName(l.width, l.height), w: l.width }))
+              .sort((a, b) => b.w - a.w)
+              .map(({ index, name }) => ({ index, name })),
+          )
           engine.current?.tick(true)
         })
         hls.on(HlsCtor.Events.AUDIO_TRACKS_UPDATED, () => setAudioCount(hls!.audioTracks.length))
-        hls.on(HlsCtor.Events.LEVEL_SWITCHED, (_e, d) => setAutoLevel(`${hls!.levels[d.level]?.height}p`))
+        hls.on(HlsCtor.Events.LEVEL_SWITCHED, (_e, d) => {
+          const l = hls!.levels[d.level]
+          if (l) setAutoLevel(qualityName(l.width, l.height))
+        })
         let recover = 0
         hls.on(HlsCtor.Events.ERROR, (_e, d) => {
           if (!d.fatal) return
@@ -188,6 +202,26 @@ export function Player() {
       v.load()
     }
   }, [m?.id, playable, reloadKey])
+
+  // Quality: the host's room choice or your own; "auto" lets bandwidth decide.
+  useEffect(() => {
+    const hls = hlsRef.current
+    if (!hls || !levels.length) return
+    if (quality === 'auto') {
+      if (!hls.autoLevelEnabled) hls.currentLevel = -1
+      return
+    }
+    const l = levels.find((x) => x.name === quality)
+    if (l && hls.currentLevel !== l.index) hls.currentLevel = l.index
+    else if (!l && !hls.autoLevelEnabled) hls.currentLevel = -1
+  }, [quality, levels])
+
+  // Audio track: the host's room choice or your own (-1 keeps the file's default).
+  useEffect(() => {
+    const hls = hlsRef.current
+    if (!hls || audio < 0 || audio >= hls.audioTracks.length || hls.audioTrack === audio) return
+    hls.audioTrack = audio
+  }, [audio, audioCount])
 
   // Subtitle selection
   useEffect(() => {
@@ -343,14 +377,23 @@ export function Player() {
     } catch {}
   }
 
-  const chooseLevel = (i: number) => {
-    setLevel(i)
-    if (hlsRef.current) hlsRef.current.currentLevel = i
+  // The host's picks set the room default; everyone else's are personal.
+  const isHost = me?.role === 'host'
+  const pick = (field: 'quality' | 'audio' | 'sub', value: string | number) => {
+    if (isHost) {
+      socket.send({ t: 'host', op: 'prefs', prefs: { ...S.prefs.value, [field]: value } })
+      if (field === 'quality') setMyQ(null)
+      if (field === 'audio') setMyAudio(null)
+      if (field === 'sub') setMySub(null)
+      return
+    }
+    if (field === 'quality') setMyQ(value as string)
+    if (field === 'audio') setMyAudio(value as number)
+    if (field === 'sub') setMySub(value as string)
   }
-  const chooseAudio = (i: number) => {
-    setAudio(i)
-    if (hlsRef.current) hlsRef.current.audioTrack = i
-  }
+  const audioName = (i: number) => (i < 0 ? 'Default' : (m?.audio || []).find((a) => a.index === i)?.label || `Track ${i + 1}`)
+  const subName = (id: string) => (id === '' ? 'Off' : (m?.subs || []).find((s) => s.id === id)?.label || id)
+  const qName = qualityLabel
 
   // ---- derived UI ----
   const behind = report.target - cur
@@ -498,9 +541,9 @@ export function Player() {
             {canControl && (
               <button
                 class={`icon-btn danger ${st?.reason === 'intermission' ? 'active' : ''}`}
-                title="Intermission: pause for everyone"
+                title={`Intermission: pause for everyone for ${S.settings.value.interMinutes || 5} min`}
                 onClick={() =>
-                  socket.send(st?.reason === 'intermission' ? { t: 'cmd', op: 'inter_end' } : { t: 'cmd', op: 'inter', sec: 300 })
+                  socket.send(st?.reason === 'intermission' ? { t: 'cmd', op: 'inter_end' } : { t: 'cmd', op: 'inter', sec: (S.settings.value.interMinutes || 5) * 60 })
                 }
               >
                 <Icon name="intermission" />
@@ -517,22 +560,42 @@ export function Player() {
               </button>
               {menu && (
                 <div class="menu" onMouseLeave={() => setMenu(false)}>
+                  {isHost ? (
+                    <div class="menu-note">Your choices apply to everyone. Viewers can still change their own.</div>
+                  ) : (
+                    <div class="menu-note">These change only your screen.</div>
+                  )}
                   <div class="menu-group">
                     <div class="menu-title">Quality</div>
-                    <button class={level === -1 ? 'sel' : ''} onClick={() => chooseLevel(-1)}>
-                      Auto {level === -1 && autoLevel ? `(${autoLevel})` : ''}
+                    {!isHost && (
+                      <button class={myQ === null ? 'sel' : ''} onClick={() => setMyQ(null)}>
+                        Host’s choice · {qName(room.quality)}
+                      </button>
+                    )}
+                    <button class={(isHost || myQ !== null) && quality === 'auto' ? 'sel' : ''} onClick={() => pick('quality', 'auto')}>
+                      Auto {quality === 'auto' && autoLevel ? `· ${autoLevel} now` : ''}
+                      <span class="menu-sub">Best for this screen and connection</span>
                     </button>
                     {levels.map((l) => (
-                      <button key={l.index} class={level === l.index ? 'sel' : ''} onClick={() => chooseLevel(l.index)}>
-                        {l.name}
+                      <button key={l.index} class={(isHost || myQ !== null) && quality === l.name ? 'sel' : ''} onClick={() => pick('quality', l.name)}>
+                        {qualityLabel(l.name)}
                       </button>
                     ))}
                   </div>
                   {audioTracks.length > 1 && audioCount > 1 && (
                     <div class="menu-group">
                       <div class="menu-title">Audio</div>
+                      {!isHost && (
+                        <button class={myAudio === null ? 'sel' : ''} onClick={() => setMyAudio(null)}>
+                          Host’s choice · {audioName(room.audio)}
+                        </button>
+                      )}
                       {audioTracks.map((a) => (
-                        <button key={a.index} class={audio === a.index ? 'sel' : ''} onClick={() => chooseAudio(a.index)}>
+                        <button
+                          key={a.index}
+                          class={(isHost || myAudio !== null) && (audio === a.index || (audio < 0 && a.index === 0)) ? 'sel' : ''}
+                          onClick={() => pick('audio', a.index)}
+                        >
                           {a.label}
                         </button>
                       ))}
@@ -540,11 +603,16 @@ export function Player() {
                   )}
                   <div class="menu-group">
                     <div class="menu-title">Subtitles</div>
-                    <button class={sub === '' ? 'sel' : ''} onClick={() => setSub('')}>
+                    {!isHost && (
+                      <button class={mySub === null ? 'sel' : ''} onClick={() => setMySub(null)}>
+                        Host’s choice · {subName(room.sub)}
+                      </button>
+                    )}
+                    <button class={(isHost || mySub !== null) && sub === '' ? 'sel' : ''} onClick={() => pick('sub', '')}>
                       Off
                     </button>
                     {subs.map((s) => (
-                      <button key={s.id} class={sub === s.id ? 'sel' : ''} onClick={() => setSub(s.id)}>
+                      <button key={s.id} class={(isHost || mySub !== null) && sub === s.id ? 'sel' : ''} onClick={() => pick('sub', s.id)}>
                         {s.label}
                       </button>
                     ))}

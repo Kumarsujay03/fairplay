@@ -13,7 +13,8 @@ Watch videos together, perfectly in sync. FairPlay is one small program you run 
 - **Watch solo when you want.** Pause or rewind just for yourself, then tap **Back to live** to rejoin the room.
 - **Intermission.** The host pauses everyone, with a countdown.
 - **Any video file.** MKV, MP4, AVI, HEVC and more are converted by ffmpeg into adaptive quality, up to 1080p. Multiple audio tracks and subtitles are kept, and playback starts while the file is still converting.
-- **Floating chat and emoji reactions** sit over the video. The host can hide chat for any viewer.
+- **Floating chat and emoji reactions** sit over the video. Scroll back through the whole session. The host can hide chat for any viewer.
+- **Your language, your quality.** Tracks are named by language. The host picks audio, subtitles and quality for the room, and anyone can switch to their own. Choose 1080p HD, 720p SD or 480p data saver, or Auto, which gives a laptop 1080p and a phone 720p.
 - **Host controls.** A lobby, co-hosts, a playlist, kick, revoke, room lock, and the ping of every viewer.
 - **Private by default.** Each person gets a personal invite link, the host admits every new device, and a bot shield protects the public link.
 - **Light.** One 7 MB binary that uses about 8 MB of memory.
@@ -61,6 +62,40 @@ That's all. FairPlay picks your Videos, Movies or Downloads folder, or creates `
 The host link printed in the terminal works like a password, so keep it private. Stopping FairPlay with Ctrl+C ends the room. Invites survive a restart, guests whose device was already admitted rejoin by themselves, and your host key changes on every start.
 
 `fairplay check` shows what FairPlay found on your computer, if something doesn't work.
+
+### Friends on your Wi-Fi can't open the link
+
+Usually this means your computer's firewall blocks incoming connections. The internet link still works because the tunnel connects outwards. On the first start FairPlay offers to fix it. You can also run this at any time:
+
+```bash
+fairplay firewall
+```
+
+It opens only port 8321, and only to your local network, using ufw, firewalld, Windows Firewall or the macOS firewall. On Windows, also make sure your Wi-Fi is set to **Private**. If it still fails, check that your router doesn't have AP isolation or a guest-network mode turned on.
+
+## Disk space
+
+Prepared videos are kept so a second showing starts instantly. A full movie takes a few GB.
+
+| OS | Where they are kept |
+|---|---|
+| Linux | `~/.cache/fairplay` |
+| macOS | `~/Library/Caches/fairplay` |
+| Windows | `%LOCALAPPDATA%\fairplay` |
+
+The cache never grows past 20 GB, because the oldest prepared videos are removed first. Change the limit with `-cache-max <GB>`, where `0` means no limit. The host console's Storage card shows what is there and can clear it.
+
+To see the space used:
+
+```bash
+fairplay cache
+```
+
+To free it after closing FairPlay:
+
+```bash
+fairplay cache clear
+```
 
 ## Updates
 
@@ -148,6 +183,8 @@ The server is the clock. Each browser pings it every 2 seconds and estimates its
 | `-lan` | `true` | Allow direct Wi-Fi joins. `false` means localhost and tunnel only |
 | `-max` | `12` | Maximum guests |
 | `-open` | `true` | Open the host console in your browser on start |
+| `-intermission` | `5` | Default intermission length in minutes. The host can change it in the console |
+| `-cache-max` | `20` | GB of prepared videos to keep. Older ones are removed first. `0` means no limit |
 | `-update` | `auto` | `auto`, `check` or `off` |
 | `-auto-admit` | `false` | Admit first-time opens without the lobby. Second devices always need approval |
 | `-ffmpeg`, `-ffprobe`, `-tunnel-bin` | from PATH | Paths to the tools |

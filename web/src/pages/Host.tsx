@@ -5,7 +5,7 @@ import * as S from '../store'
 import { Icon, Logo } from '../components/Icons'
 import { LobbyEntry } from '../components/Lobby'
 import { Avatar, peerStatus } from '../components/Peers'
-import { copy, fmtBytes, fmtTime, navigate, pingClass } from '../util'
+import { copy, fmtBytes, fmtTime, navigate, pingClass, qualityLabel } from '../util'
 
 interface Item {
   id: string
@@ -201,6 +201,7 @@ function Console() {
           />
           <Playback pos={pos} />
           <Share guests={guests.length} />
+          <Storage />
         </section>
         <section class="col gap24">
           {S.lobby.value.length > 0 && (
@@ -340,6 +341,7 @@ function NowPlaying({
 }) {
   const [filter, setFilter] = useState('')
   const [picking, setPicking] = useState(false)
+  const queuedAt = (id: string) => S.queue.value.findIndex((q) => q.id === id)
   const lib = S.library.value
   const shown = items.filter((i) => i.path.toLowerCase().includes(filter.toLowerCase()))
   const curLive = cur ? lib[cur.id] || cur : null
@@ -347,9 +349,20 @@ function NowPlaying({
     <div class="card">
       <div class="card-head">
         <div class="h18">Now playing</div>
-        <button class="icon-btn sm plain" onClick={onRefresh} title="Rescan folder">
-          <Icon name="refresh" size={18} />
-        </button>
+        <div class="row">
+          {cur && (
+            <button
+              class="btn btn-danger btn-sm"
+              title="Stop the video for everyone and stop preparing it"
+              onClick={() => confirm(`Stop “${cur.name}” for everyone?`) && socket.send({ t: 'host', op: 'clear' })}
+            >
+              Stop &amp; clear
+            </button>
+          )}
+          <button class="icon-btn sm plain" onClick={onRefresh} title="Rescan folder">
+            <Icon name="refresh" size={18} />
+          </button>
+        </div>
       </div>
       {curLive ? <MediaSummary m={curLive} /> : <div class="dim">Pick a video below. It starts preparing right away.</div>}
 
@@ -370,9 +383,14 @@ function NowPlaying({
               </button>
             </div>
           ))}
-          <button class="btn btn-ghost btn-sm" onClick={() => socket.send({ t: 'host', op: 'next' })}>
-            <Icon name="next" size={14} /> Play next now
-          </button>
+          <div class="row">
+            <button class="btn btn-ghost btn-sm" onClick={() => socket.send({ t: 'host', op: 'next' })}>
+              <Icon name="next" size={14} /> Play next now
+            </button>
+            <button class="btn btn-ghost btn-sm" onClick={() => socket.send({ t: 'host', op: 'queue_clear' })}>
+              Clear queue
+            </button>
+          </div>
         </div>
       )}
 
@@ -418,9 +436,19 @@ function NowPlaying({
                     {s?.state === 'encoding' && ` · encoding ${s.duration ? Math.round((s.encoded / s.duration) * 100) : 0}%`}
                   </span>
                 </div>
-                <button class="btn btn-sm btn-ghost" onClick={() => socket.send({ t: 'host', op: 'queue_add', media: it.id })}>
-                  Queue
-                </button>
+                {queuedAt(it.id) >= 0 ? (
+                  <button
+                    class="btn btn-sm btn-ghost queued"
+                    title="Remove from the queue"
+                    onClick={() => socket.send({ t: 'host', op: 'queue_remove', index: queuedAt(it.id) })}
+                  >
+                    Queued ✓ <span class="muted">· remove</span>
+                  </button>
+                ) : (
+                  <button class="btn btn-sm btn-ghost" onClick={() => socket.send({ t: 'host', op: 'queue_add', media: it.id })}>
+                    Queue
+                  </button>
+                )}
                 <button class="btn btn-sm btn-primary" onClick={() => socket.send({ t: 'host', op: 'load', media: it.id })}>
                   Play
                 </button>
@@ -466,8 +494,61 @@ function MediaSummary({ m }: { m: S.MediaStatus }) {
           <EncoderLead m={m} />
         </>
       )}
+      {m.playable && S.media.value?.id === m.id && <RoomTracks m={m} />}
       {m.error && <div class="caption warn-text">{m.error}</div>}
       {m.notes?.map((n) => <div class="caption muted" key={n}>{n}</div>)}
+    </div>
+  )
+}
+
+/** The host's choice of audio, subtitles and quality for everyone. Viewers
+ * follow it unless they pick their own in the player menu. */
+function RoomTracks({ m }: { m: S.MediaStatus }) {
+  const p = S.prefs.value
+  const set = (patch: Partial<S.TrackPrefs>) => socket.send({ t: 'host', op: 'prefs', prefs: { ...p, ...patch } })
+  const audio = m.audio || []
+  const subs = m.subs || []
+  return (
+    <div class="room-tracks">
+      <div class="label dim">Picture and sound for everyone</div>
+      <div class="row wrap">
+        {audio.length > 1 && (
+          <label class="track-pick">
+            <span class="caption muted">Audio</span>
+            <select class="input select" value={String(p.audio)} onChange={(e) => set({ audio: parseInt((e.target as HTMLSelectElement).value) })}>
+              <option value="-1">File default</option>
+              {audio.map((a) => (
+                <option key={a.index} value={String(a.index)}>
+                  {a.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <label class="track-pick">
+          <span class="caption muted">Subtitles</span>
+          <select class="input select" value={p.sub} onChange={(e) => set({ sub: (e.target as HTMLSelectElement).value })}>
+            <option value="">Off</option>
+            {subs.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label class="track-pick">
+          <span class="caption muted">Quality</span>
+          <select class="input select" value={p.quality} onChange={(e) => set({ quality: (e.target as HTMLSelectElement).value })}>
+            <option value="auto">Auto (best per device and connection)</option>
+            {(m.rungs || []).map((r) => (
+              <option key={r} value={r}>
+                {qualityLabel(r)}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div class="caption muted">Viewers start with these and can change them for their own screen. Only you control play, pause and intermission.</div>
     </div>
   )
 }
@@ -484,6 +565,41 @@ function EncoderLead({ m }: { m: S.MediaStatus }) {
     <div class={`caption tag-text ${cls}`}>
       Encoder is {fmtTime(Math.max(0, ahead))} ahead of the room
       {ahead <= 15 ? ' · the room pauses briefly if it catches up' : ''}
+    </div>
+  )
+}
+
+/** Intermission button with an editable length. The length is a room
+ * setting, so the player's intermission button uses it too. */
+function IntermissionStart({ disabled, onStart }: { disabled: boolean; onStart: (minutes: number) => void }) {
+  const s = S.hostSettings.value
+  const saved = s?.interMinutes || 5
+  const [min, setMin] = useState(saved)
+  useEffect(() => setMin(saved), [saved])
+  const commit = (v: number) => {
+    const n = Math.max(1, Math.min(120, Math.round(v) || 5))
+    setMin(n)
+    if (s && n !== s.interMinutes) socket.send({ t: 'host', op: 'settings', settings: { ...s, interMinutes: n } })
+    return n
+  }
+  return (
+    <div class="row inter-start">
+      <button class="btn btn-danger" onClick={() => onStart(commit(min))} disabled={disabled}>
+        Intermission
+      </button>
+      <label class="row inter-len" title="Intermission length in minutes, 1 to 120">
+        <input
+          class="input num"
+          type="number"
+          min={1}
+          max={120}
+          value={min}
+          aria-label="Intermission length in minutes"
+          onInput={(e) => setMin(parseInt((e.target as HTMLInputElement).value))}
+          onChange={(e) => commit(parseInt((e.target as HTMLInputElement).value))}
+        />
+        <span class="caption dim">min</span>
+      </label>
     </div>
   )
 }
@@ -516,9 +632,7 @@ function Playback({ pos }: { pos: number }) {
           </button>
         ) : (
           <>
-            <button class="btn btn-danger" onClick={() => send('inter', { sec: 300 })} disabled={!m?.playable}>
-              Intermission 5 min
-            </button>
+            <IntermissionStart disabled={!m?.playable} onStart={(min) => send('inter', { sec: min * 60 })} />
             <button class="btn btn-ghost" onClick={() => send('inter', { sec: 0 })} disabled={!m?.playable}>
               Pause for all
             </button>
@@ -537,6 +651,84 @@ function Playback({ pos }: { pos: number }) {
       />
       <div class="caption muted">
         Play, pause and seek here move the global timer for everyone. Guests who pause on their own stay behind until they tap “Back to live”.
+      </div>
+    </div>
+  )
+}
+
+interface StorageInfo {
+  path: string
+  bytes: number
+  max: number
+  items: { key: string; name: string; bytes: number; done: boolean; inUse: boolean }[]
+}
+
+/** Where prepared videos live, how much space they take, and a way to free it. */
+function Storage() {
+  const [info, setInfo] = useState<StorageInfo | null>(null)
+  const [busy, setBusy] = useState(false)
+  const load = () => get<StorageInfo>('/api/host/storage').then((r) => setInfo({ ...r, items: r.items || [] })).catch(() => {})
+  useEffect(() => {
+    load()
+    const t = setInterval(load, 30000)
+    return () => clearInterval(t)
+  }, [])
+  if (!info) return null
+  const clear = async () => {
+    if (!confirm('Delete prepared videos to free space? The video playing now is kept. Others are prepared again when played.')) return
+    setBusy(true)
+    try {
+      const r = await post<StorageInfo & { freed: number }>('/api/host/storage/clear')
+      setInfo({ ...r, items: r.items || [] })
+      S.showToast(`Freed ${fmtBytes(r.freed)}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+  const pct = info.max > 0 ? Math.min(100, (info.bytes / info.max) * 100) : 0
+  const others = info.items.filter((i) => !i.inUse)
+  return (
+    <div class="card">
+      <div class="card-head">
+        <div class="h18">Storage</div>
+        <button class="icon-btn sm plain" onClick={load} title="Refresh">
+          <Icon name="refresh" size={18} />
+        </button>
+      </div>
+      <div class="col tight">
+        <div class="row">
+          <span class="grow">
+            Prepared videos use <strong>{fmtBytes(info.bytes)}</strong>
+            {info.max > 0 && <span class="dim"> of {fmtBytes(info.max)}</span>}
+          </span>
+        </div>
+        {info.max > 0 && (
+          <div class="progress">
+            <div style={{ width: `${pct}%` }} />
+          </div>
+        )}
+        <span class="mono caption muted ellipsis" title={info.path}>
+          {info.path}
+        </span>
+      </div>
+      {info.items.length > 0 && (
+        <div class="divider-list">
+          {info.items.slice(0, 5).map((i) => (
+            <div class="row storage-row" key={i.key}>
+              <span class="grow ellipsis">{i.name}</span>
+              {i.inUse && <span class="tag ok">in use</span>}
+              {!i.done && !i.inUse && <span class="tag neutral">unfinished</span>}
+              <span class="mono caption dim">{fmtBytes(i.bytes)}</span>
+            </div>
+          ))}
+          {info.items.length > 5 && <div class="caption muted pad">+{info.items.length - 5} more</div>}
+        </div>
+      )}
+      <button class="btn btn-ghost" onClick={clear} disabled={busy || others.length === 0}>
+        {others.length === 0 ? 'Nothing else to clear' : `Clear prepared videos (${fmtBytes(others.reduce((a, i) => a + i.bytes, 0))})`}
+      </button>
+      <div class="caption muted">
+        Older videos are removed automatically when the limit is reached. After closing FairPlay you can also run <span class="mono">fairplay cache clear</span>.
       </div>
     </div>
   )

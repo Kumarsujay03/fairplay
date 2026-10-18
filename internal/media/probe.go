@@ -27,14 +27,17 @@ type AudioInfo struct {
 	Lang     string `json:"lang"`
 	Title    string `json:"title"`
 	Default  bool   `json:"default"`
+	Comment  bool   `json:"commentary,omitempty"`
 }
 
 type SubInfo struct {
-	Index int    `json:"index"` // position among subtitle streams
-	Codec string `json:"codec"`
-	Lang  string `json:"lang"`
-	Title string `json:"title"`
-	Text  bool   `json:"text"` // bitmap subtitles (PGS, VobSub) cannot be converted to WebVTT
+	Index  int    `json:"index"` // position among subtitle streams
+	Codec  string `json:"codec"`
+	Lang   string `json:"lang"`
+	Title  string `json:"title"`
+	Text   bool   `json:"text"` // bitmap subtitles (PGS, VobSub) cannot be converted to WebVTT
+	Forced bool   `json:"forced,omitempty"`
+	SDH    bool   `json:"sdh,omitempty"`
 }
 
 type Info struct {
@@ -108,12 +111,14 @@ func parseProbe(b []byte) (Info, error) {
 			info.Audio = append(info.Audio, AudioInfo{
 				Index: na, Codec: s.CodecName, Channels: s.Channels,
 				Lang: tag(s.Tags, "language"), Title: tag(s.Tags, "title"), Default: s.Disposition["default"] == 1,
+				Comment: s.Disposition["comment"] == 1,
 			})
 			na++
 		case "subtitle":
 			info.Subs = append(info.Subs, SubInfo{
 				Index: ns, Codec: s.CodecName, Lang: tag(s.Tags, "language"), Title: tag(s.Tags, "title"),
-				Text: textSubCodecs[s.CodecName],
+				Text: textSubCodecs[s.CodecName], Forced: s.Disposition["forced"] == 1,
+				SDH: s.Disposition["hearing_impaired"] == 1,
 			})
 			ns++
 		}

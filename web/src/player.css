@@ -88,7 +88,7 @@
 
 /* Floating reactions */
 .reaction-layer { position: absolute; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; }
-.float-emoji { position: absolute; bottom: 150px; left: 70%; font-size: 30px; opacity: 0; will-change: transform, opacity; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4)); }
+.float-emoji { position: absolute; left: 80%; top: 70%; margin-left: -0.5em; font-size: 30px; line-height: 1; opacity: 0; will-change: transform, opacity; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4)); }
 
 /* Viewers */
 .stack { cursor: pointer; }
@@ -122,7 +122,7 @@ video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-family: var(--fo
 .player.compact .center-card { padding: 16px 20px; }
 .player.compact .countdown { font-size: 36px; line-height: 44px; }
 .player.compact .peers-panel { left: 8px; right: 8px; width: auto; top: 52px; }
-.player.compact .float-emoji { bottom: 50px; font-size: 24px; }
+.player.compact .float-emoji { font-size: 24px; }
 .below { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg-canvas); }
 .below-title { padding: 12px 16px 8px; }
 .chat-compact { flex: 1; min-height: 0; padding: 0 16px calc(12px + env(safe-area-inset-bottom)); }
@@ -172,3 +172,22 @@ video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-family: var(--fo
 .folder-list { max-height: 240px; overflow: auto; display: flex; flex-direction: column; }
 .folder-row { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 8px; text-align: left; font-size: 14px; }
 .folder-row:hover { background: var(--bg-elevated); }
+
+/* Scrollable chat history without a visible scrollbar */
+.chat-list { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; -ms-overflow-style: none; }
+.chat-list::-webkit-scrollbar { display: none; }
+.chat-float .chat-list { max-height: 264px; padding-top: 28px; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 36px); mask-image: linear-gradient(to bottom, transparent 0, #000 36px); }
+.chat-float .chat-list > :first-child { margin-top: auto; }
+.chat-float .chat-list.scrolled { max-height: 340px; }
+.new-pill { align-self: center; padding: 5px 12px; border-radius: 999px; background: var(--amber); color: var(--on-amber); font-size: 12px; font-weight: 600; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4); animation: bubble-in 0.18s ease-out; }
+.inter-start { gap: 8px; }
+.inter-len { gap: 6px; }
+.inter-len .num { width: 68px; padding: 9px 10px; }
+.menu-note { font-size: 12px; line-height: 16px; color: var(--text-2); padding: 6px 10px 8px; }
+.room-tracks { display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+.track-pick { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
+.track-pick .select { width: 100%; padding: 8px 10px; }
+.menu-sub { display: block; font-size: 11px; color: var(--text-3); margin-top: 1px; }
+.menu button.sel .menu-sub { color: var(--text-3); }
+.btn.queued { color: var(--amber); }
+.storage-row { padding: 8px 0; gap: 8px; }

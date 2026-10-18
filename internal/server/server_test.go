@@ -266,6 +266,20 @@ func TestFullRoomFlow(t *testing.T) {
 	gw.wait("media", func(m map[string]any) bool { mm := m["media"].(map[string]any); return mm["playable"] == true })
 	gw.wait("state", func(m map[string]any) bool { return m["state"].(map[string]any)["reason"] == "host" })
 
+	// The host sets the room's audio, subtitles and quality; guests receive it but cannot set it.
+	hw.send(map[string]any{"t": "host", "op": "prefs", "prefs": map[string]any{"audio": 1, "sub": "sub_0", "quality": "1080p"}})
+	pm := gw.wait("prefs", func(m map[string]any) bool { return m["prefs"].(map[string]any)["quality"] == "1080p" })["prefs"].(map[string]any)
+	if pm["audio"].(float64) != 1 || pm["sub"] != "sub_0" {
+		t.Fatalf("prefs %v", pm)
+	}
+	gw.send(map[string]any{"t": "host", "op": "prefs", "prefs": map[string]any{"audio": 0, "sub": "", "quality": "auto"}})
+	gw.wait("err", func(m map[string]any) bool { return strings.Contains(m["text"].(string), "only the host") })
+	hw.send(map[string]any{"t": "host", "op": "prefs", "prefs": map[string]any{"audio": 99, "sub": "../x", "quality": "huge"}})
+	clean := gw.wait("prefs", func(m map[string]any) bool { return m["prefs"].(map[string]any)["quality"] == "auto" })["prefs"].(map[string]any)
+	if clean["audio"].(float64) != -1 || clean["sub"] != "" {
+		t.Fatalf("bad prefs must be cleaned, got %v", clean)
+	}
+
 	// Guest can stream the current file but nothing else.
 	if code, _ := guest.do("GET", "/hls/"+f.ids[0]+"/master.m3u8", nil, false); code != 200 {
 		t.Fatalf("guest hls current %d", code)
@@ -295,6 +309,14 @@ func TestFullRoomFlow(t *testing.T) {
 		s := m["state"].(map[string]any)
 		return s["playing"] == false && s["by"] == "Priya P"
 	})
+
+	// Intermission length is a host setting that guests' players follow, clamped to 1..120 minutes.
+	hw.send(map[string]any{"t": "host", "op": "settings", "settings": map[string]any{
+		"roomName": "Test night", "reactions": true, "maxGuests": 5, "interMinutes": 12}})
+	gw.wait("settings", func(m map[string]any) bool { return m["settings"].(map[string]any)["interMinutes"].(float64) == 12 })
+	hw.send(map[string]any{"t": "host", "op": "settings", "settings": map[string]any{
+		"roomName": "Test night", "reactions": true, "maxGuests": 5, "interMinutes": 500}})
+	gw.wait("settings", func(m map[string]any) bool { return m["settings"].(map[string]any)["interMinutes"].(float64) == 120 })
 
 	// Intermission with countdown.
 	hw.send(map[string]any{"t": "cmd", "op": "inter", "sec": 60})
@@ -363,6 +385,25 @@ func TestFullRoomFlow(t *testing.T) {
 		}
 		return false
 	})
+
+	// Queue: add both files, remove one, clear the rest.
+	hw.send(map[string]any{"t": "host", "op": "queue_add", "media": f.ids[1]})
+	hw.wait("queue", func(m map[string]any) bool { return len(m["queue"].([]any)) == 1 })
+	hw.send(map[string]any{"t": "host", "op": "queue_add", "media": f.ids[0]})
+	hw.wait("queue", func(m map[string]any) bool { return len(m["queue"].([]any)) == 2 })
+	hw.send(map[string]any{"t": "host", "op": "queue_remove", "index": 0})
+	hw.wait("queue", func(m map[string]any) bool { return len(m["queue"].([]any)) == 1 })
+	hw.send(map[string]any{"t": "host", "op": "queue_clear"})
+	hw.wait("queue", func(m map[string]any) bool { return len(m["queue"].([]any)) == 0 })
+
+	// Stop and clear: no video for anyone, and guests lose access to its stream.
+	hw.send(map[string]any{"t": "host", "op": "clear"})
+	gw.wait("state", func(m map[string]any) bool { return m["state"].(map[string]any)["media"] == "" })
+	if code, _ := guest.do("GET", "/hls/"+f.ids[0]+"/master.m3u8", nil, false); code != 404 {
+		t.Fatalf("after clearing, guests must not reach the old stream, got %d", code)
+	}
+	hw.send(map[string]any{"t": "host", "op": "load", "media": f.ids[0]})
+	gw.wait("state", func(m map[string]any) bool { return m["state"].(map[string]any)["media"] == f.ids[0] })
 
 	// Forwarded link: another device gets the lobby, flagged, and does not kick Priya.
 	stranger := newClient(t, f.srv.URL)
@@ -483,5 +524,35 @@ func TestRateLimitPerIP(t *testing.T) {
 	other.ip = "192.0.2.51"
 	if code, _ := other.do("GET", "/api/challenge", nil, false); code != 200 {
 		t.Fatalf("a different visitor must not be affected, got %d", code)
+	}
+}
+
+// The console treats these fields as lists; null instead of [] once crashed it.
+func TestHostAPIListsAreNeverNull(t *testing.T) {
+	f := setup(t)
+	host := hostLogin(t, f)
+	empty := t.TempDir()
+	if err := f.mm.SetRoot(empty); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ path, field string }{
+		{"/api/host/library", "items"},
+		{"/api/host/storage", "items"},
+	} {
+		req, _ := http.NewRequest("GET", f.srv.URL+c.path, nil)
+		res, err := host.hc.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var raw map[string]json.RawMessage
+		_ = json.NewDecoder(res.Body).Decode(&raw)
+		res.Body.Close()
+		if v := strings.TrimSpace(string(raw[c.field])); v == "null" || v == "" {
+			t.Errorf("%s: %q must be a list, got %s", c.path, c.field, v)
+		}
+	}
+	code, out := host.do("POST", "/api/host/storage/clear", map[string]any{}, true)
+	if code != 200 || out["items"] == nil {
+		t.Errorf("storage/clear: %d items=%v", code, out["items"])
 	}
 }

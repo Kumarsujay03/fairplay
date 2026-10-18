@@ -27,6 +27,32 @@ export function initial(name: string): string {
   return [...name.trim()][0] || '?'
 }
 
+/** Quality label from a picture size, by its long side: 1920×800 is "1080p". */
+export function qualityName(w: number, h: number): string {
+  const long = Math.max(w, h)
+  if (long >= 1800) return '1080p'
+  if (long >= 1200) return '720p'
+  if (long >= 800) return '480p'
+  if (long >= 600) return '360p'
+  return `${Math.min(w, h)}p`
+}
+
+/** Friendly name for a quality rung: "1080p HD", "720p SD". */
+export function qualityLabel(q: string): string {
+  switch (q) {
+    case 'auto':
+      return 'Auto'
+    case '1080p':
+      return '1080p HD'
+    case '720p':
+      return '720p SD'
+    case '480p':
+      return '480p data saver'
+    default:
+      return q
+  }
+}
+
 export function pingClass(ms: number): string {
   if (ms <= 0) return ''
   if (ms < 120) return 'good'
@@ -35,7 +61,7 @@ export function pingClass(ms: number): string {
 }
 
 export function fmtBytes(n: number): string {
-  if (n > 1e9) return `${(n / 1e9).toFixed(1)} GB`
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`
   if (n > 1e6) return `${(n / 1e6).toFixed(0)} MB`
   return `${Math.round(n / 1e3)} KB`
 }
