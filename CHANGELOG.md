@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1 (2026-10-19)
+
+The 0.1.4 encoding and streaming code from 0.3.0, with three changes to how ffmpeg runs, so the host can watch on the computer that prepares the film:
+
+- GPU encoding on Linux through VAAPI (Intel and AMD graphics): the picture is uploaded to the GPU once and every version is scaled and encoded there. Preparing a 1080p film now takes about two CPU cores instead of eight to twelve. Without a usable GPU, libx264 on the CPU is used as before
+- ffmpeg starts at the lowest CPU priority (through `nice -n 19`, so all its threads inherit it) and may use at most half of the CPU threads, so the browser always has cores to decode the picture
+- With the GPU encoder, its own keyframe interval matches the 4-second pieces, so every version still cuts into identical 4-second pieces
+
+Measured on a 1080p film while it was being prepared, with the host watching on the same laptop and a guest on another browser: no buffering on either, 1 dropped frame in 3,000 on the host, both back in sync within a second after each pause and play, and 10 ms apart on average.
+
 ## 0.3.0 (2026-10-19)
 
 The encoding and streaming code is back to exactly what it was in 0.1.4, the last version before the host's own screen started buffering while guests played fine. Everything added to that path from 0.1.5 on is removed:

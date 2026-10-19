@@ -325,7 +325,7 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	subDone := make(chan []SubTrack, 1)
 	go func() { subDone <- m.extractSubs(ctx, dir, it, info) }()
 
-	cmd := exec.CommandContext(ctx, m.ffmpeg, args...)
+	cmd := ffmpegCommand(ctx, m.ffmpeg, args...)
 	cmd.Dir = dir
 	stdout, _ := cmd.StdoutPipe()
 	var stderr strings.Builder
@@ -403,7 +403,7 @@ func (m *Manager) extractSubs(ctx context.Context, dir string, it Item, info Inf
 	var out []SubTrack
 	args, keep := subtitleArgs(it.abs, info.Subs)
 	if len(keep) > 0 {
-		cmd := exec.CommandContext(ctx, m.ffmpeg, args...)
+		cmd := ffmpegCommand(ctx, m.ffmpeg, args...)
 		cmd.Dir = dir
 		if err := cmd.Run(); err != nil {
 			log.Printf("media: subtitles for %s: %v", it.RelPath, err)
