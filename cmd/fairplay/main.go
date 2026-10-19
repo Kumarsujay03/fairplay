@@ -8,7 +8,6 @@
 package main
 
 import (
-	"sort"
 	"context"
 	"errors"
 	"flag"
@@ -20,6 +19,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
