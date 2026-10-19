@@ -99,6 +99,14 @@ type Options struct {
 }
 
 func NewManager(ctx context.Context, o Options) (*Manager, error) {
+	// ffmpeg runs inside the cache folder, so relative -media and -cache
+	// paths would break it: make both absolute first.
+	if abs, err := filepath.Abs(o.Root); err == nil {
+		o.Root = abs
+	}
+	if abs, err := filepath.Abs(o.Cache); err == nil {
+		o.Cache = abs
+	}
 	realRoot, err := filepath.EvalSymlinks(o.Root)
 	if err != nil {
 		return nil, fmt.Errorf("media folder: %w", err)
@@ -132,6 +140,9 @@ func (m *Manager) Root() string {
 // SetRoot switches the library to another folder. Finished encodes stay in
 // the cache and are found again if the old folder is chosen later.
 func (m *Manager) SetRoot(dir string) error {
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
 	real, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		return fmt.Errorf("folder not found: %s", dir)

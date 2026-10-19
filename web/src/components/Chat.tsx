@@ -5,7 +5,10 @@ import { Icon } from './Icons'
 import { DEFAULT_REACTIONS, colorFor, emojiChar, emojiURL, recentEmoji, rememberEmoji } from '../util'
 import { EmojiPicker } from './EmojiPicker'
 
-const IDLE_FADE_MS = 10000
+// How long the bubbles stay after a message: reading time, not a fixed number.
+// 4 s plus 60 ms per character of the newest message, between 5 and 12 s, so
+// "ok" is gone in about 5 s and a full 200-character line stays about 12 s.
+const fadeAfter = (text: string) => Math.min(12000, Math.max(5000, 4000 + 60 * text.length))
 // Touchscreens fire a "mouse enter" on the first tap and never a "leave", and
 // keep the composer focused after a send, so neither may hold the chat open there.
 const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches
@@ -15,9 +18,14 @@ const NEAR_BOTTOM = 24 // px from the bottom that still counts as "following" th
 // Floating chat. The panel itself is transparent; only bubbles have a
 // background. About four messages fit; scroll up (wheel or swipe, no visible
 // scrollbar) to read the whole session. New messages don't pull you down while
-// you are reading older ones; a pill offers to jump back. The stack fades after
-// a quiet spell unless you hover, type or are scrolled up.
-export function Chat({ compact = false, open = true }: { compact?: boolean; open?: boolean }) {
+// you are reading older ones; a pill offers to jump back.
+//
+// What shows when: a new message brings the bubbles up for its reading time, and
+// they are also up whenever the player's controls are (uiOn). The text box,
+// send button and reaction bar appear only when the pointer is over the chat
+// area or the box has focus; on a touchscreen they come up with the controls.
+// A reaction never brings the chat up: it floats over the picture on its own.
+export function Chat({ compact = false, open = true, uiOn = true }: { compact?: boolean; open?: boolean; uiOn?: boolean }) {
   const [text, setText] = useState('')
   const [idle, setIdle] = useState(false)
   const [hover, setHover] = useState(false)
@@ -40,10 +48,10 @@ export function Chat({ compact = false, open = true }: { compact?: boolean; open
 
   useEffect(() => {
     setIdle(false)
-    const t = setTimeout(() => setIdle(true), IDLE_FADE_MS)
+    const newest = msgs[msgs.length - 1]
+    const t = setTimeout(() => setIdle(true), fadeAfter(newest?.text || ''))
     const added = msgs.length - lastCount.current
     lastCount.current = msgs.length
-    const newest = msgs[msgs.length - 1]
     if (following || (newest && newest.sid === me) || added < 0 || added > 20) {
       // Following the chat, or you just sent, or history was replaced: stick to the bottom.
       requestAnimationFrame(() => toBottom(added === 1))
@@ -94,13 +102,15 @@ export function Chat({ compact = false, open = true }: { compact?: boolean; open
 
   const chatOn = you.value?.chat !== false
   const shown = chatOn ? msgs : []
-  const faded = !compact && idle && (touch || (!hover && !focus)) && following
+  const pointer = (hover && !touch) || focus
+  const faded = !compact && idle && !pointer && !uiOn && following
+  const composerHidden = !compact && !pointer && !(touch && uiOn)
 
   if (!open && !compact) return null
 
   return (
     <div
-      class={`chat ${compact ? 'chat-compact' : 'chat-float'} ${faded ? 'faded' : ''}`}
+      class={`chat ${compact ? 'chat-compact' : 'chat-float'} ${faded ? 'faded' : ''} ${composerHidden ? 'composer-hidden' : ''}`}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
