@@ -36,11 +36,11 @@ import (
 var version = "dev"
 
 type options struct {
-	media, tunnel, tunnelBin, ffmpeg, ffprobe, cache, data, name, update, versions string
-	port, maxGuests, interMinutes                                                  int
-	lan, autoAdmit, open, emojiPreload                                             bool
-	mediaSet                                                                       bool // -media was given explicitly
-	cacheMaxGB                                                                     float64
+	media, tunnel, tunnelBin, ffmpeg, ffprobe, cache, data, name, update, versions, pace string
+	port, maxGuests, interMinutes                                                        int
+	lan, autoAdmit, open, emojiPreload                                                   bool
+	mediaSet                                                                             bool // -media was given explicitly
+	cacheMaxGB                                                                           float64
 }
 
 func parseFlags(name string, args []string) options {
@@ -62,6 +62,7 @@ func parseFlags(name string, args []string) options {
 	fs.IntVar(&o.maxGuests, "max", 12, "maximum number of guests")
 	fs.StringVar(&o.versions, "versions", "balanced", "quality versions to prepare: original (smallest), balanced (original + 720p) or full (original + 720p + 480p)")
 	fs.IntVar(&o.interMinutes, "intermission", 5, "default intermission length in minutes (the host can change it in the console)")
+	fs.StringVar(&o.pace, "prepare", "cool", "preparing speed: cool (paced at twice playback speed after a 10-minute head start, about one CPU core) or fast (half the CPU, finishes sooner)")
 	fs.BoolVar(&o.emojiPreload, "emoji-preload", true, "prepare every animated reaction in the background (a one-time download), so they animate the moment they are sent")
 	fs.BoolVar(&o.autoAdmit, "auto-admit", false, "admit first-time invite opens without the lobby (second devices always need approval)")
 	fs.BoolVar(&o.open, "open", true, "open the host console in your browser on start")
@@ -170,7 +171,7 @@ func start(o options) {
 		fail("%v", err)
 	}
 	mm.MaxCache = int64(o.cacheMaxGB * 1e9)
-	h := hub.New(store, mm, hub.Settings{RoomName: o.name, AutoAdmit: o.autoAdmit, Reactions: true, MaxGuests: o.maxGuests, InterMinutes: o.interMinutes, Versions: o.versions})
+	h := hub.New(store, mm, hub.Settings{RoomName: o.name, AutoAdmit: o.autoAdmit, Reactions: true, MaxGuests: o.maxGuests, InterMinutes: o.interMinutes, Versions: o.versions, Pace: o.pace})
 	srv := server.New(store, h, mm, webui.FS())
 	mm.Current = h.CurrentMedia
 	if freed := mm.Prune(mm.MaxCache, ""); freed > 0 {

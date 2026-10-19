@@ -98,6 +98,7 @@ export interface HostSettings {
   maxGuests: number
   interMinutes: number
   versions: 'original' | 'balanced' | 'full'
+  pace: 'cool' | 'fast'
 }
 
 export interface Tunnel {

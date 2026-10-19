@@ -34,6 +34,27 @@ const (
 )
 
 // NormalizeVersions maps unknown values to the default.
+// Preparing speed. Cool paces the encoder at twice playback speed after a
+// ten-minute head start, so it needs about one CPU core and the computer
+// stays quiet and cool; viewers can never catch up with it. Fast uses half
+// the CPU threads flat out and finishes much sooner.
+const (
+	PaceCool = "cool"
+	PaceFast = "fast"
+)
+
+const (
+	paceRate  = 2   // times playback speed
+	paceBurst = 600 // seconds prepared at full speed first
+)
+
+func NormalizePace(p string) string {
+	if p == PaceFast {
+		return PaceFast
+	}
+	return PaceCool
+}
+
 func NormalizeVersions(v string) string {
 	switch v {
 	case VersionsOriginal, VersionsBalanced, VersionsFull:
@@ -195,7 +216,7 @@ func streamOpts(opts []string, i int) []string {
 }
 
 // buildArgs returns the ffmpeg arguments for one transcode into dir.
-func buildArgs(input string, info Info, enc Encoder, tonemap bool, versions string) ([]string, []rung, []AudioInfo) {
+func buildArgs(input string, info Info, enc Encoder, tonemap bool, versions, pace string, canPace bool) ([]string, []rung, []AudioInfo) {
 	rungs := planVersions(info.Video, versions)
 	portrait := info.Video.Height > info.Video.Width
 	audio := info.Audio
@@ -208,10 +229,16 @@ func buildArgs(input string, info Info, enc Encoder, tonemap bool, versions stri
 		encoded = rungs[1:]
 	}
 
-	// Half the CPU at most: the host usually watches on this same computer,
-	// and the browser needs cores to decode the picture smoothly.
-	threads := encodeThreads()
-	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-threads", fmt.Sprint(threads), "-i", input}
+	// The host usually watches on this same computer, so the browser must
+	// keep enough CPU to decode the picture smoothly: cool mode uses a quarter
+	// of the threads and is paced, fast mode uses half of them flat out.
+	cool := NormalizePace(pace) == PaceCool
+	threads := encodeThreads(cool)
+	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-threads", fmt.Sprint(threads)}
+	if cool && canPace {
+		args = append(args, "-readrate", fmt.Sprint(paceRate), "-readrate_initial_burst", fmt.Sprint(paceBurst))
+	}
+	args = append(args, "-i", input)
 	if len(encoded) > 0 {
 		// Video chain: optional deinterlace and HDR tonemap, square pixels, split.
 		var pre []string
@@ -254,17 +281,7 @@ func buildArgs(input string, info Info, enc Encoder, tonemap bool, versions stri
 			args = append(args, fmt.Sprintf("-c:v:%d", i), "copy")
 			continue
 		}
-		opts := enc.Args
-		if copyTop && soft {
-			// Only the smaller versions are encoded, so spend the spare CPU on quality.
-			opts = append([]string(nil), opts...)
-			for k := range opts {
-				if opts[k] == "veryfast" {
-					opts[k] = "fast"
-				}
-			}
-		}
-		args = append(args, streamOpts(opts, i)...)
+		args = append(args, streamOpts(enc.Args, i)...)
 		if soft {
 			args = append(args, fmt.Sprintf("-threads:v:%d", i), fmt.Sprint(max(2, threads/len(encoded))))
 		}
@@ -396,8 +413,20 @@ func fixMaster(path string, rungs []rung) error {
 	return os.Rename(tmp, path)
 }
 
-// encodeThreads is how many threads ffmpeg may use: half the logical CPUs,
-// at least 2.
-func encodeThreads() int {
+// encodeThreads is how many threads ffmpeg may use: a quarter of the logical
+// CPUs when cool, half when fast, at least 2 either way.
+func encodeThreads(cool bool) int {
+	if cool {
+		return max(2, runtime.NumCPU()/4)
+	}
 	return max(2, runtime.NumCPU()/2)
+}
+
+// HasOption reports whether this ffmpeg knows a command-line option.
+func HasOption(ffmpeg, name string) bool {
+	out, err := exec.Command(ffmpeg, "-hide_banner", "-h", "full").Output()
+	if err != nil {
+		return false
+	}
+	return regexp.MustCompile(`(?m)^\s*-` + regexp.QuoteMeta(name) + `\s`).Match(out)
 }

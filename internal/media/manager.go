@@ -80,6 +80,8 @@ type Manager struct {
 	enc            Encoder
 	tonemap        bool
 	versions       atomic.Value // string: VersionsOriginal, VersionsBalanced or VersionsFull
+	pace           atomic.Value // string: PaceCool or PaceFast
+	canPace        bool         // ffmpeg has -readrate_initial_burst (6.1+)
 
 	mu       sync.Mutex
 	items    map[string]Item
@@ -121,6 +123,7 @@ func NewManager(ctx context.Context, o Options) (*Manager, error) {
 		items: map[string]Item{}, statuses: map[string]*Status{},
 	}
 	m.enc = DetectEncoder(ctx, o.FFmpeg)
+	m.canPace = HasOption(o.FFmpeg, "readrate_initial_burst")
 	m.tonemap = HasFilter(o.FFmpeg, "zscale") && HasFilter(o.FFmpeg, "tonemap")
 	return m, nil
 }
@@ -138,6 +141,18 @@ func (m *Manager) Versions() string {
 // SetVersions changes what the next prepared video gets. Prepared videos are
 // kept per setting, so switching back reuses them.
 func (m *Manager) SetVersions(v string) { m.versions.Store(NormalizeVersions(v)) }
+
+// Pace is how fast new encodes run: cool (paced, default) or fast.
+func (m *Manager) Pace() string {
+	if v, ok := m.pace.Load().(string); ok {
+		return v
+	}
+	return PaceCool
+}
+
+// SetPace applies to the next prepared video. The output is identical either
+// way, so prepared videos are shared between the two settings.
+func (m *Manager) SetPace(p string) { m.pace.Store(NormalizePace(p)) }
 
 // key is the cache folder for an item under the current versions setting.
 func (m *Manager) key(it Item) string { return cacheKey(it, m.Versions()) }
@@ -317,7 +332,7 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	}
 
 	versions := m.Versions()
-	args, rungs, audio := buildArgs(it.abs, info, m.enc, m.tonemap, versions)
+	args, rungs, audio := buildArgs(it.abs, info, m.enc, m.tonemap, versions, m.Pace(), m.canPace)
 	est := estimateBytes(info, rungs, len(audio))
 	var notes []string
 	if info.Video.HDR && !m.tonemap {

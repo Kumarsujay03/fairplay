@@ -3,7 +3,8 @@
 // Every 250 ms it computes where the room is right now (from the anchor and
 // the server clock) and corrects the local playhead:
 //   drift < tolerance     -> leave it alone
-//   drift < 1.5 s         -> nudge playbackRate between 0.95 and 1.05
+//   drift < 1.5 s         -> nudge playbackRate between 0.95 and 1.05, and
+//                            seek if that hasn't worked within 8 s
 //   drift >= 1.5 s        -> hard seek, aiming slightly ahead to cover the
 //                            time the seek itself takes
 // Tolerance grows with network jitter so a shaky link is not corrected
@@ -21,6 +22,7 @@ const TICK = 250
 const HARD = 1.5
 const MAX_NUDGE = 0.05
 const STALL_MS = 6000
+const NUDGE_MAX_MS = 8000
 
 export interface SyncReport {
   target: number
@@ -44,6 +46,7 @@ export class SyncEngine {
   private seekCost = 0.25 // learned seconds a seek takes to resume
   private seekAt = 0
   private nudging = false
+  private nudgeSince = 0
   private playPending = false
   private autoMuted = false // we muted it to get past the autoplay rules
   private stallSince = 0
@@ -152,9 +155,18 @@ export class SyncEngine {
       const wait = v.seeking || buffering ? 4000 : 1000
       if (!this.seekAt || performance.now() - this.seekAt > wait) this.seek(target + this.seekCost)
     } else if (abs > tol) {
-      // Converge in roughly two seconds.
-      this.setRate(1 - Math.max(-MAX_NUDGE, Math.min(MAX_NUDGE, drift / 2)))
+      // Converge in roughly two seconds. A busy computer may not manage even
+      // 5% faster; if it hasn't caught up after a while, jump instead.
+      const now = performance.now()
+      if (!this.nudging) this.nudgeSince = now
       this.nudging = true
+      if (now - this.nudgeSince > NUDGE_MAX_MS && abs > 0.3 && !v.seeking) {
+        this.setRate(1)
+        this.nudging = false
+        this.seek(target + this.seekCost)
+      } else {
+        this.setRate(1 - Math.max(-MAX_NUDGE, Math.min(MAX_NUDGE, drift / 2)))
+      }
     } else if (this.nudging && abs < tol / 2) {
       this.setRate(1)
       this.nudging = false
