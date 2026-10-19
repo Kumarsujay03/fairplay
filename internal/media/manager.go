@@ -130,6 +130,10 @@ func NewManager(ctx context.Context, o Options) (*Manager, error) {
 
 func (m *Manager) EncoderName() string { return m.enc.Name }
 
+// EncoderLabel and EncoderHint describe the encoder for people.
+func (m *Manager) EncoderLabel() string { return m.enc.Label() }
+func (m *Manager) EncoderHint() string  { return m.enc.Hint() }
+
 // Versions is how many quality versions new encodes get.
 func (m *Manager) Versions() string {
 	if v, ok := m.versions.Load().(string); ok {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.9 (2026-10-19)
+
+- GPU encoding on Linux through VAAPI (Intel and AMD graphics): the smaller versions are scaled and encoded on the GPU, so preparing a film costs about half of one CPU core. FairPlay tries it first; if the driver is missing, the start-up banner says what to install
+- Automatic quality stops at 720p on phones and tablets, where it looks the same and saves battery and data; laptops and TVs get 1080p. Picking a quality by hand still allows anything
+- The banner names the encoder in plain words (GPU (VAAPI), NVIDIA GPU (NVENC), CPU (libx264)…)
+
 ## 0.1.8 (2026-10-19)
 
 - New **Preparing speed** setting (`-prepare`). **Cool**, the default, paces the encoder at twice playback speed with a quarter of the CPU threads at the lowest priority: about one or two cores, so the computer stays quiet and cool while you watch on it, and viewers can never catch up with it. **Fast** uses half the CPU flat out and has a 2-hour film ready in minutes

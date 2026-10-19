@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -148,33 +149,102 @@ func estimateBytes(info Info, rungs []rung, audioTracks int) int64 {
 }
 
 // Encoder is a video encoder ffmpeg can use on this machine.
+// Device is the GPU device for encoders that need one (VAAPI).
 type Encoder struct {
-	Name string
-	Args []string
+	Name   string
+	Args   []string
+	Device string
 }
 
-var softwareEncoder = Encoder{"libx264", []string{"-c:v", "libx264", "-preset", "veryfast", "-profile:v", "high", "-pix_fmt", "yuv420p", "-sc_threshold", "0"}}
+var softwareEncoder = Encoder{Name: "libx264", Args: []string{"-c:v", "libx264", "-preset", "veryfast", "-profile:v", "high", "-pix_fmt", "yuv420p", "-sc_threshold", "0"}}
 
 var hwCandidates = []Encoder{
-	{"h264_nvenc", []string{"-c:v", "h264_nvenc", "-preset", "p4", "-profile:v", "high", "-pix_fmt", "yuv420p", "-forced-idr", "1"}},
-	{"h264_qsv", []string{"-c:v", "h264_qsv", "-preset", "veryfast", "-pix_fmt", "nv12"}},
-	{"h264_videotoolbox", []string{"-c:v", "h264_videotoolbox", "-pix_fmt", "yuv420p", "-allow_sw", "0"}},
+	{Name: "h264_nvenc", Args: []string{"-c:v", "h264_nvenc", "-preset", "p4", "-profile:v", "high", "-pix_fmt", "yuv420p", "-forced-idr", "1"}},
+	{Name: "h264_qsv", Args: []string{"-c:v", "h264_qsv", "-preset", "veryfast", "-pix_fmt", "nv12"}},
+	{Name: "h264_videotoolbox", Args: []string{"-c:v", "h264_videotoolbox", "-pix_fmt", "yuv420p", "-allow_sw", "0"}},
+}
+
+// VAAPI (Intel and AMD GPUs on Linux) needs a device and runs its scaler on
+// the GPU too, so a smaller version costs the CPU almost nothing.
+const vaapiName = "h264_vaapi"
+
+func vaapiEncoder(dev string) Encoder {
+	return Encoder{
+		Name:   vaapiName,
+		Device: dev,
+		Args:   []string{"-c:v", "h264_vaapi", "-profile:v", "high", "-rc_mode", "VBR"},
+	}
 }
 
 // DetectEncoder tries each hardware encoder with a two-frame test encode and
-// falls back to libx264.
+// falls back to libx264. VAAPI is tried first on Linux: it is what Intel and
+// AMD laptops have, and the Quick Sync path needs a runtime that is rarely
+// installed.
 func DetectEncoder(ctx context.Context, ffmpeg string) Encoder {
-	for _, c := range hwCandidates {
+	try := func(global []string, c Encoder, filter string) bool {
 		tctx, cancel := context.WithTimeout(ctx, 8*time.Second)
-		args := append([]string{"-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=640x360:d=0.2", "-frames:v", "2"}, c.Args...)
-		args = append(args, "-f", "null", "-")
-		err := exec.CommandContext(tctx, ffmpeg, args...).Run()
-		cancel()
-		if err == nil {
+		defer cancel()
+		args := append([]string{"-hide_banner", "-loglevel", "error"}, global...)
+		args = append(args, "-f", "lavfi", "-i", "color=c=black:s=640x360:d=0.2", "-frames:v", "2")
+		if filter != "" {
+			args = append(args, "-vf", filter)
+		}
+		args = append(args, c.Args...)
+		// Rate-controlled encoders refuse to open without a bitrate.
+		args = append(args, "-b:v", "1000k", "-maxrate", "1500k", "-f", "null", "-")
+		return exec.CommandContext(tctx, ffmpeg, args...).Run() == nil
+	}
+	if runtime.GOOS == "linux" {
+		for _, dev := range vaapiDevices() {
+			c := vaapiEncoder(dev)
+			if try(c.globalArgs(), c, "format=nv12,hwupload") {
+				return c
+			}
+		}
+	}
+	for _, c := range hwCandidates {
+		if try(nil, c, "") {
 			return c
 		}
 	}
 	return softwareEncoder
+}
+
+func vaapiDevices() []string {
+	m, _ := filepath.Glob("/dev/dri/renderD*")
+	return m
+}
+
+// Label is the encoder in plain words, for the start-up banner.
+func (e Encoder) Label() string {
+	switch e.Name {
+	case vaapiName:
+		return "GPU (VAAPI)"
+	case "h264_nvenc":
+		return "NVIDIA GPU (NVENC)"
+	case "h264_qsv":
+		return "Intel GPU (Quick Sync)"
+	case "h264_videotoolbox":
+		return "Apple GPU (VideoToolbox)"
+	}
+	return "CPU (libx264)"
+}
+
+// Hint says how to get GPU encoding when the machine seems to have a GPU
+// that this ffmpeg can't use yet. Empty when there is nothing to suggest.
+func (e Encoder) Hint() string {
+	if e.Name != softwareEncoder.Name || runtime.GOOS != "linux" || len(vaapiDevices()) == 0 {
+		return ""
+	}
+	return "Your GPU could prepare videos with almost no CPU. Install the VAAPI driver (Ubuntu/Debian: sudo apt install intel-media-va-driver-non-free for Intel, mesa-va-drivers for AMD) and start FairPlay again."
+}
+
+// globalArgs are the input-side options an encoder needs.
+func (e Encoder) globalArgs() []string {
+	if e.Name != vaapiName {
+		return nil
+	}
+	return []string{"-init_hw_device", "vaapi=va:" + e.Device, "-filter_hw_device", "va"}
 }
 
 // HasFilter reports whether ffmpeg was built with a filter.
@@ -235,6 +305,7 @@ func buildArgs(input string, info Info, enc Encoder, tonemap bool, versions, pac
 	cool := NormalizePace(pace) == PaceCool
 	threads := encodeThreads(cool)
 	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-threads", fmt.Sprint(threads)}
+	args = append(args, enc.globalArgs()...)
 	if cool && canPace {
 		args = append(args, "-readrate", fmt.Sprint(paceRate), "-readrate_initial_burst", fmt.Sprint(paceBurst))
 	}
@@ -250,15 +321,25 @@ func buildArgs(input string, info Info, enc Encoder, tonemap bool, versions, pac
 				"tonemap=tonemap=hable:desat=0", "zscale=t=bt709:m=bt709:r=tv", "format=yuv420p")
 		}
 		pre = append(pre, "scale=trunc(iw*sar/2)*2:ih", "setsar=1")
+		gpu := enc.Name == vaapiName
+		if gpu {
+			// Frames go to the GPU once; each version is scaled there.
+			pre = append(pre, "format=nv12", "hwupload")
+		}
 		fc := "[0:v:0]" + strings.Join(pre, ",") + fmt.Sprintf(",split=%d", len(encoded))
 		for i := range encoded {
 			fc += fmt.Sprintf("[s%d]", i)
 		}
 		for i, r := range encoded {
 			// Scale the long side down to the rung, never up, keeping the shape.
-			if portrait {
+			switch {
+			case gpu && portrait:
+				fc += fmt.Sprintf(";[s%d]scale_vaapi=w=-2:h='min(%d,ih)'[v%d]", i, r.Long, i)
+			case gpu:
+				fc += fmt.Sprintf(";[s%d]scale_vaapi=w='min(%d,iw)':h=-2[v%d]", i, r.Long, i)
+			case portrait:
 				fc += fmt.Sprintf(";[s%d]scale=-2:'min(%d,ih)':flags=bicubic[v%d]", i, r.Long, i)
-			} else {
+			default:
 				fc += fmt.Sprintf(";[s%d]scale='min(%d,iw)':-2:flags=bicubic[v%d]", i, r.Long, i)
 			}
 		}
