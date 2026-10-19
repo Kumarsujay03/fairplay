@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.2 (2026-10-20)
 
 - An event log runs for the whole showing, always on, at `~/.config/fairplay/logs/fairplay-<date>-<time>.jsonl` (one JSON object per line; `fairplay logs` lists the files and some `jq` filters). It records every room state change (play, pause, seek, who did it, the reason), every viewer's status once a second (position against the room clock, drift, ping, buffering, seconds buffered ahead, dropped frames, quality, bandwidth estimate, tab visibility), every command and host-console action, chat and reactions, joins and leaves, the exact ffmpeg command and the encoder's progress, every HLS request with its size and how long it took, and what each player saw in its browser: stalls, seeks, quality switches, hls.js errors, the sync engine's nudges and hard seeks, and the viewer's own clicks. When someone buffers or falls behind, the log says what every part of FairPlay was doing at that second. The 30 newest files are kept
 - Fix: a decoder failure on the host's computer paused the whole room. When the browser's video decoder fails (a garbled green and magenta picture, then a decode error) it pauses the video element itself, and so does hls.js while it rebuilds the stream afterwards. The player took that pause for the host pressing Pause and stopped everyone. Those pauses are now recognised and ignored; the host's player recovers on its own and the room plays on. The same mistake could drop a guest into solo mode; it no longer does

@@ -28,13 +28,14 @@ FairPlay is a single binary you run on your own computer. It serves a small web 
 - Adaptive quality per viewer, with up to three rungs between 1080p and 360p chosen from the source. Bandwidth picks the rung automatically, with a manual override.
 - Audio track and subtitle selection. Subtitles come from the file or from a sidecar .srt, .vtt or .ass.
 - Volume, mute, fullscreen, picture-in-picture and keyboard shortcuts.
+- A screen lock. While locked, taps, clicks, double taps and keys do nothing, the controls and chat stay hidden, and a tap shows a centred "tap to unlock" pill for a moment. The host's click on the picture never pauses the room; it shows the controls, as a tap does on a phone.
 - A playlist: queue files, reorder them, and move to the next. When a file ends, the next one loads and plays.
 
 **Social**
 - Floating chat in the bottom right. The panel is transparent and only the WhatsApp-style bubbles have a background. Four messages are visible, the oldest is faded, and the stack fades away when chat is quiet.
 - A composer with a send button, and an emoji reaction bar beneath it.
 - Reactions float up over the video for everyone, and are rate limited.
-- Late joiners see the last 50 messages.
+- Late joiners see the last 50 messages. Chat bubbles fade 10 seconds after the last message, on phones too.
 - A viewer list showing each name, status (live, solo, buffering, syncing) and ping. You can rename yourself there.
 
 **Host**
@@ -77,7 +78,11 @@ FairPlay is a single binary you run on your own computer. It serves a small web 
 
 **Track names** come from the language tag: English, Hindi, Indonesian, from an ISO 639 table of about 90 languages. Titles are kept only when they add information, such as SDH, Forced or Commentary. A title repeated on every track, or one that looks like a website or release group, is ignored. Duplicates are numbered.
 
-**Track choice.** The host sets the room's audio, subtitles and quality. They reset when the video changes, and every player follows them. A viewer can override any of the three for their own screen. Auto quality is limited by the player's on-screen size times the device's pixel density, then by bandwidth, so phones settle at 720p and laptops at 1080p.
+**Track choice.** The host sets the room's audio, subtitles and quality. They reset when the video changes, and every player follows them. A viewer can override any of the three for their own screen. Auto quality is limited by the player's on-screen size times the device's pixel density, then by bandwidth, so phones settle at 720p and laptops at 1080p. The host's player is the exception: it streams from its own computer, so "auto" there means the best rung its screen can show, fixed, with no switching. hls.js's warm-up (a dip to 480p, then 720p, then 1080p in the first twelve seconds, whatever the bandwidth) made the browser's decoder reconfigure three times, and one of those switches broke the host's decoder.
+
+### Event log
+
+`internal/eventlog` writes one JSON object per line to `<data>/logs/fairplay-<date>-<time>.jsonl` for the whole run, buffered and flushed once a second. Nothing in the hot path waits for disk, and a failed write is ignored. Events: `start` and `stop`; `ws.join`, `ws.leave` and `ws.slow`; `room.state` on every broadcast; `cmd` and `host` for every command and console action; `chat`, `react` and `kick`; `media` for the encoder's progress and `encode.plan` with the exact ffmpeg command; `hls` for every file served, with size and time taken; `status` once a second per viewer (position against the room clock, drift, ping, jitter, buffering, seconds buffered ahead, buffered ranges, dropped frames, quality, bandwidth estimate, tab visibility); and `player.*` for what the browser saw, sent over the socket as `log` messages and rate limited per connection: `video.*` element events, `hls.*` (level loads, fragment appends, slow pieces, warnings, errors), `sync.*` (holds, nudges, hard seeks, learned seek cost) and `user.*` (every click). `fairplay logs` lists the files with some `jq` filters, and the 30 newest are kept.
 
 Only the exact file names ffmpeg produces can be served, enforced by an allowlist regex. Guests can only reach the file the room is currently showing.
 
@@ -112,6 +117,7 @@ The server is the clock. Clients never trust their own wall time.
 **Protecting the experience.**
 - If one viewer stalls, only that viewer catches up when their buffer refills, and the room keeps playing. The host can turn on "wait for everyone", which pauses the room after 0.7 s of anyone's stall and resumes 0.5 s after everyone is ready.
 - Adaptive bitrate drops a slow viewer to a lower rung before they stall.
+- A pause the browser makes on its own is never taken for the viewer's. A failing decoder pauses the element, and so does hls.js while it rebuilds the media source afterwards; the player recognises both (an error on the element, or a recovery within the last five seconds) and leaves the room alone. Before this, a decoder failure on the host's computer paused the whole room.
 - Ping turns amber at 120 ms and red at 300 ms. The viewer stack shows "slow link" when anyone is above 300 ms.
 - Reconnects resume automatically. After a FairPlay restart, a guest tab silently rejoins with its stored invite, because the device was already admitted.
 
@@ -203,8 +209,10 @@ Every phase of the original plan is complete.
 | Tunnel supervisor, host console, playlist | Done. cloudflared checked live |
 | Tests, multi-browser sync, security pass | Done. Race detector clean, staticcheck clean |
 | Installers, signed auto-update, first-run defaults | Done. Update tested end to end against a local release server, including tampered and forged releases |
+| GPU encoding (VAAPI), low-priority ffmpeg, host playback on the encoding computer | Done. Measured on an Intel Iris Xe laptop: about two CPU cores for a 1080p film, no stall on the host or a guest |
+| Event log, screen lock, host decoder recovery, fixed host quality | Done. Reproduced a host stall across three browsers with the log, and verified the lock in the browser |
 
 Known limits:
 - Picture-based subtitles (PGS, VobSub) cannot be shown.
-- Hardware encoders are detected but were only exercised on machines without them, where libx264 was used.
+- NVENC, Quick Sync and VideoToolbox are detected but were only exercised on machines without them, where VAAPI or libx264 was used.
 - The ngrok path is implemented but was not run live.
