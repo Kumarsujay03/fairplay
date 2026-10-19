@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0 (2026-10-19)
+
+The encoding and streaming code is back to exactly what it was in 0.1.4, the last version before the host's own screen started buffering while guests played fine. Everything added to that path from 0.1.5 on is removed:
+
+- Copying the original picture, quality-version and preparing-speed settings (`-versions`, `-prepare`), the bitrate patching of the playlist, the 45-second start threshold and 15-second seek margin
+- GPU (VAAPI) encoding, the nice-19 start and CPU thread caps, the run-ahead-then-rest encoder and resuming an interrupted encode
+- In the player: the stall restarts, the background-tab catch-up, the reworked pause and media-key handling, the playback-error retry window and the phone 720p cap. The sync engine is the 0.1.4 one again
+
+Kept, because they are not part of encoding or streaming: `fairplay stop`, preloaded animated reactions and their longer hold, the Watching list layout, and the phone fixes (chat on the right in landscape, the settings sheet, the tap that no longer flickers, the status pill that shortens)
+
+As in 0.1.4, preparing uses the CPU (libx264) at full speed and the encoder speed shows in the console. Videos prepared by 0.1.5–0.2.3 are prepared again the first time they are played.
+
 ## 0.2.3 (2026-10-19)
 
 - The encoder runs ahead, then rests. It prepares at full speed until it is 10 minutes ahead of the room, then the process is frozen (no CPU, no GPU) and thaws when the lead shrinks to 5 minutes. The host usually watches on the computer that encodes, and an encoder working flat out through the whole showing was what made the host's own player stutter while every guest was fine. Guests notice nothing: the encoder is always minutes ahead of them. The console shows "10 min ahead, resting" while it waits. A video the room isn't showing is prepared without pauses

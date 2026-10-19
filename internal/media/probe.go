@@ -18,8 +18,6 @@ type VideoInfo struct {
 	PixFmt     string  `json:"pixFmt"`
 	HDR        bool    `json:"hdr"`
 	Interlaced bool    `json:"interlaced"`
-	Kbps       int     `json:"kbps,omitempty"` // video stream bitrate when known
-	SAR        string  `json:"sar,omitempty"`
 }
 
 type AudioInfo struct {
@@ -79,8 +77,6 @@ type probeJSON struct {
 		FieldOrder   string            `json:"field_order"`
 		ColorTrans   string            `json:"color_transfer"`
 		Channels     int               `json:"channels"`
-		BitRate      string            `json:"bit_rate"`
-		SAR          string            `json:"sample_aspect_ratio"`
 		Tags         map[string]string `json:"tags"`
 		Disposition  map[string]int    `json:"disposition"`
 	} `json:"streams"`
@@ -110,10 +106,6 @@ func parseProbe(b []byte) (Info, error) {
 				FPS:        parseRate(s.AvgFrameRate),
 				HDR:        s.ColorTrans == "smpte2084" || s.ColorTrans == "arib-std-b67",
 				Interlaced: s.FieldOrder != "" && s.FieldOrder != "progressive" && s.FieldOrder != "unknown",
-				SAR:        s.SAR,
-			}
-			if b, err := strconv.Atoi(s.BitRate); err == nil {
-				info.Video.Kbps = b / 1000
 			}
 		case "audio":
 			info.Audio = append(info.Audio, AudioInfo{
@@ -133,13 +125,6 @@ func parseProbe(b []byte) (Info, error) {
 	}
 	if info.Video == nil {
 		return info, fmt.Errorf("no video stream found")
-	}
-	if info.Video.Kbps == 0 && info.Bitrate > 0 {
-		audio := 0
-		for _, a := range info.Audio {
-			audio += 160 * max(1, a.Channels/2) // rough: 160 kbps per stereo pair
-		}
-		info.Video.Kbps = max(0, int(info.Bitrate/1000)-audio)
 	}
 	return info, nil
 }

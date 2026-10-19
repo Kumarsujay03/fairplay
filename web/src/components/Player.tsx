@@ -45,8 +45,6 @@ export function Player() {
   const [chatOpen, setChatOpen] = useState(true)
   const [showUi, setShowUi] = useState(true)
   const lastTouch = useRef(0)
-  const lastGesture = useRef(0)
-  const canControlRef = useRef(false)
   const [isFs, setIsFs] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
   const [inPip, setInPip] = useState(false)
@@ -62,7 +60,6 @@ export function Player() {
   const m = S.media.value
   const me = S.you.value
   const canControl = !!me?.control
-  canControlRef.current = canControl
   const mode = S.mode.value
   const duration = m?.duration || 0
   const playable = !!m?.playable && m.id === st?.media
@@ -75,61 +72,14 @@ export function Player() {
     e.onReport = setReport
     e.onBlocked = setBlocked
     e.onMutedStart = () => setSoundOff(true)
-    // Stuck while the room plays: restart loading at the room position, and
-    // rebuild the player if that doesn't help.
-    // Stuck while the room plays: restart loading at the room position, and
-    // rebuild the player if that doesn't help. Never a quality change: the
-    // viewer's quality is theirs (or the host's choice), and switching it
-    // mid-stream was itself a cause of black screens and seconds of delay.
-    e.onStall = (n) => {
-      const hls = hlsRef.current
-      console.warn('FairPlay: no progress while the room plays, restarting the stream at the room position (' + n + ')')
-      if (hls && n <= 2) {
-        hls.stopLoad()
-        if (n === 2) hls.recoverMediaError()
-        hls.startLoad(e.target())
-      } else {
-        setReloadKey((k) => k + 1)
-      }
-    }
     engine.current = e
     e.start()
 
     const onPause = () => {
       setPaused(true)
-      // Only a pause that follows the viewer's own tap, key or media-key
-      // press counts as theirs. Browsers also pause on their own (a tab put
-      // in the background, a locked phone, a stalled stream); treating that
-      // as the viewer's choice left them in solo mode, behind the room, when
-      // they came back. The sync engine simply resumes those.
-      const age = performance.now() - lastGesture.current
-      const fromUser = age < 1500
-      if (!e.isOwnAction() && !v.ended && e.mode === 'follow' && S.room.value?.playing) {
-        console.warn('FairPlay: pause event,', fromUser ? `after a gesture ${Math.round(age)} ms ago` : 'not from the viewer, resuming')
-        if (fromUser) userPause()
-      }
+      // Pauses from outside our UI (media keys, PiP window) count as the user's.
+      if (!e.isOwnAction() && !v.ended && e.mode === 'follow' && S.room.value?.playing) userPause()
     }
-    const onGesture = () => (lastGesture.current = performance.now())
-    for (const ev of ['pointerdown', 'keydown', 'touchstart']) document.addEventListener(ev, onGesture, true)
-    // Lock-screen and headset controls arrive here, not as gestures.
-    const ms = navigator.mediaSession
-    try {
-      ms?.setActionHandler('pause', () => {
-        // Browsers also send this when another tab starts playing. A guest
-        // simply goes solo; a host must use the on-screen button, so a
-        // media key or another tab can never pause the whole room.
-        if (canControlRef.current) {
-          S.showToast('Use the pause button on screen to pause for everyone')
-          return
-        }
-        onGesture()
-        v.pause()
-      })
-      ms?.setActionHandler('play', () => {
-        onGesture()
-        togglePlay()
-      })
-    } catch {}
     const onPlay = () => setPaused(false)
     const onTime = () => {
       setCur(v.currentTime)
@@ -167,11 +117,6 @@ export function Player() {
       if (!on) (screen.orientation as any)?.unlock?.()
     }
     document.addEventListener('fullscreenchange', onFs)
-    // Coming back to a background tab: catch up at once.
-    const onVis = () => {
-      if (!document.hidden) e.tick(true)
-    }
-    document.addEventListener('visibilitychange', onVis)
 
     // Report our status to the room once a second.
     const statusTimer = setInterval(() => sendStatus(), 1000)
@@ -186,12 +131,6 @@ export function Player() {
       v.removeEventListener('leavepictureinpicture', onPipOut)
       mq.removeEventListener('change', onMq)
       document.removeEventListener('fullscreenchange', onFs)
-      document.removeEventListener('visibilitychange', onVis)
-      for (const ev of ['pointerdown', 'keydown', 'touchstart']) document.removeEventListener(ev, onGesture, true)
-      try {
-        ms?.setActionHandler('pause', null)
-        ms?.setActionHandler('play', null)
-      } catch {}
     }
   }, [])
 
@@ -260,25 +199,16 @@ export function Player() {
           if (l) setAutoLevel(qualityName(l.width, l.height))
         })
         let recover = 0
-        let lastMediaError = 0
         hls.on(HlsCtor.Events.ERROR, (_e, d) => {
-          console.warn('FairPlay playback:', d.type, d.details, d.fatal ? 'fatal' : '', d.reason || d.error?.message || '', d.frag ? `level ${d.frag.level} frag ${d.frag.sn} @${d.frag.start.toFixed(1)}s` : '')
           if (!d.fatal) return
           if (d.type === HlsCtor.ErrorTypes.NETWORK_ERROR) {
             setTimeout(() => hls?.startLoad(), 1000)
-            return
+          } else if (d.type === HlsCtor.ErrorTypes.MEDIA_ERROR && recover++ < 3) {
+            hls!.recoverMediaError()
+          } else {
+            S.showToast('Playback error, reloading the stream', 'error')
+            setTimeout(() => setReloadKey((k) => k + 1), 1500)
           }
-          if (d.type === HlsCtor.ErrorTypes.MEDIA_ERROR) {
-            // Up to three recoveries a minute; a two-hour film may hit a few.
-            if (performance.now() - lastMediaError > 60_000) recover = 0
-            lastMediaError = performance.now()
-            if (recover++ < 3) {
-              hls!.recoverMediaError()
-              return
-            }
-          }
-          S.showToast('Playback error, reloading the stream', 'error')
-          setTimeout(() => setReloadKey((k) => k + 1), 1500)
         })
         hls.loadSource(src)
         hls.attachMedia(v)
@@ -298,11 +228,6 @@ export function Player() {
     const hls = hlsRef.current
     if (!hls || !levels.length) return
     if (quality === 'auto') {
-      // Phones and tablets stop at 720p: it looks the same on a small screen
-      // and costs far less battery and data. Laptops and TVs go up to 1080p.
-      // Picking a quality by hand still allows anything.
-      const sd = hls.levels.reduce((best, l, i) => (l.width <= 1280 && (best < 0 || l.width > hls.levels[best].width) ? i : best), -1)
-      hls.autoLevelCapping = touch && sd >= 0 ? sd : -1
       if (!hls.autoLevelEnabled) hls.currentLevel = -1
       return
     }
@@ -438,9 +363,7 @@ export function Player() {
   // encoded; everyone else can go back but never ahead of the room, where
   // chunks may not exist yet (and it would spoil the film).
   function seekLimit(): number {
-    // Stay well behind the encoder's edge: a segment appears only once it
-    // is complete, and waiting for one puts a viewer out of step.
-    const encodedMax = m && m.state !== 'ready' ? Math.max(0, m.encoded - 15) : duration || Infinity
+    const encodedMax = m && m.state !== 'ready' ? Math.max(0, m.encoded - 2) : duration || Infinity
     if (canControl) return encodedMax
     return Math.min(encodedMax, engine.current?.target() ?? 0)
   }
@@ -1025,4 +948,3 @@ function Seekbar(p: {
     </div>
   )
 }
-
