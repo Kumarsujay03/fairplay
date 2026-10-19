@@ -12,12 +12,14 @@ Watch videos together, perfectly in sync. FairPlay is one small program you run 
 - **One global clock.** Everyone sees the same frame at the same moment. Two viewers measured 14–25 ms apart.
 - **Watch solo when you want.** Pause or rewind just for yourself, then tap **Back to live** to rejoin the room.
 - **Intermission.** The host pauses everyone, with a countdown.
-- **Any video file.** MKV, MP4, AVI, HEVC and more are converted by ffmpeg into adaptive quality, up to 1080p. Multiple audio tracks and subtitles are kept, and playback starts while the file is still converting.
+- **Any video file.** MKV, MP4, AVI, HEVC and more are converted by ffmpeg into adaptive quality, up to 1080p. Multiple audio tracks and subtitles are kept, and playback starts while the file is still converting. On Linux with Intel or AMD graphics the conversion runs on the GPU, and ffmpeg always runs at the lowest priority with half the CPU threads, so the host's own player stays smooth.
 - **Floating chat and Telegram-style animated reactions.** Pick from more than 600 animated emoji. Each one pops in with a burst and floats up over the chat. Scroll back through the whole chat session. The host can hide chat for any viewer.
-- **Your language, your quality.** Tracks are named by language. The host picks audio, subtitles and quality for the room, and anyone can switch to their own. Choose 1080p HD, 720p SD or 480p data saver, or Auto, which gives a laptop 1080p and a phone 720p.
+- **Your language, your quality.** Tracks are named by language. The host picks audio, subtitles and quality for the room, and anyone can switch to their own. Choose 1080p HD, 720p SD or 480p data saver, or Auto, which gives a laptop 1080p and a phone 720p. The host's own player plays one fixed quality, since it streams from its own computer.
+- **Screen lock.** A lock button in the player. While locked, taps, clicks and keys do nothing, so a phone in a hand can't pause or skip for everyone. Chat bubbles fade on their own 10 seconds after the last message.
 - **Host controls.** A lobby, co-hosts, a playlist, kick, revoke, room lock, and the ping of every viewer.
 - **Private by default.** Each person gets a personal invite link, the host admits every new device, and a bot shield protects the public link.
-- **Light.** One 7 MB binary that uses about 8 MB of memory.
+- **Light.** One 8 MB binary that uses about 8 MB of memory.
+- **An event log of every showing.** Who was where on the timeline, second by second, every play, pause and seek, the encoder's progress, and what each player saw in its browser. When something stutters, `fairplay logs` says what went wrong.
 
 | Watching solo | Host console | Phone |
 |---|---|---|
@@ -63,6 +65,16 @@ The host link printed in the terminal works like a password, so keep it private.
 
 `fairplay check` shows what FairPlay found on your computer, if something doesn't work.
 
+| Command | What it does |
+|---|---|
+| `fairplay` | Start a room and open the host console |
+| `fairplay stop` | End the room and close FairPlay running in another terminal |
+| `fairplay check` | Show what FairPlay found: ffmpeg, cloudflared, encoder, Wi-Fi addresses, firewall |
+| `fairplay firewall` | Let Wi-Fi guests through this computer's firewall |
+| `fairplay cache` | Show the prepared videos and their size. `fairplay cache clear` deletes them |
+| `fairplay logs` | Where the event logs are, and how to read them |
+| `fairplay update` | Install the latest release now |
+
 ### Friends on your Wi-Fi can't open the link
 
 Usually this means your computer's firewall blocks incoming connections. The internet link still works because the tunnel connects outwards. On the first start FairPlay offers to fix it. You can also run this at any time:
@@ -72,6 +84,20 @@ fairplay firewall
 ```
 
 It opens only port 8321, and only to your local network, using ufw, firewalld, Windows Firewall or the macOS firewall. On Windows, also make sure your Wi-Fi is set to **Private**. If it still fails, check that your router doesn't have AP isolation or a guest-network mode turned on.
+
+The Wi-Fi link uses your Wi-Fi card's address. VPN tunnels and virtual adapters (Docker, VirtualBox, WireGuard, Tailscale, Windscribe and the like) are skipped, because their addresses look private but lead nowhere for a phone on the Wi-Fi. `fairplay check` lists the addresses FairPlay found.
+
+### Something stutters, buffers or falls out of sync
+
+Every start writes an event log, one JSON object per line, for the whole showing: every play, pause and seek with who did it, each viewer's position against the room clock once a second (drift, ping, how many seconds are buffered, dropped frames, quality), the encoder's progress and exact command, every piece served, and what each player saw inside its browser (stalls, seeks, quality switches, hls.js warnings and errors). Note the time, then:
+
+```bash
+fairplay logs
+```
+
+It lists the files and prints some `jq` filters, for example one viewer second by second, or every stall and error in one list. The logs are in `~/.config/fairplay/logs` on Linux, `~/Library/Application Support/fairplay/logs` on macOS and `%APPDATA%\fairplay\logs` on Windows. The 30 newest are kept.
+
+Two things the log has already taught us. A browser extension can silently stop the player from loading more of the video; opening the room in a private window, where extensions are off, tells you in one try. And a garbled green and magenta picture is the browser's own video decoder failing, not a bad file: the player recovers by itself and the room keeps playing.
 
 ## Disk space
 
@@ -204,6 +230,7 @@ The server is the clock. Each browser pings it every 2 seconds and estimates its
 | ↑ or ↓ | Volume |
 | M | Mute |
 | F | Fullscreen |
+| Lock button | Lock the screen: taps and keys do nothing until you tap the lock again |
 | C | Show or hide chat |
 | G | Back to live |
 | Enter | Start typing in chat |
@@ -211,7 +238,7 @@ The server is the clock. Each browser pings it every 2 seconds and estimates its
 ## Limits
 
 - Over the internet every viewer streams their own copy, so your upload speed is the ceiling. The host console shows the upload needed. Viewers on slow links drop to a lower quality automatically.
-- The first showing of a file transcodes it. This runs at about 2–3× realtime with libx264 on a modern CPU, and faster with NVENC, Quick Sync or VideoToolbox. Later showings start instantly from the cache.
+- The first showing of a file transcodes it. This runs at about 2–3× realtime with libx264 on a modern CPU, and faster on a GPU with VAAPI (Linux, Intel or AMD), NVENC, Quick Sync or VideoToolbox. ffmpeg runs at the lowest priority with half the CPU threads so the host can watch on the same computer. Later showings start instantly from the cache.
 - Picture-based subtitles (PGS or VobSub from Blu-ray rips) cannot be shown. Text subtitles and sidecar `.srt`, `.vtt` or `.ass` files work.
 - ngrok's free plan shows a warning page to visitors and needs `ngrok config add-authtoken` first. cloudflared needs no account.
 
