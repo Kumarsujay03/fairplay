@@ -59,6 +59,8 @@ That's all. FairPlay picks your Videos, Movies or Downloads folder, or creates `
 3. When they open it, admit them from the lobby.
 4. Press play. Everyone starts on the same tick.
 
+Preparing a film takes the computer's GPU (or CPU) for a while. FairPlay prepares at full speed until it is 10 minutes ahead of the room, then rests until the lead shrinks to 5 minutes, so the computer you host from stays free while you watch. If you stop FairPlay mid-way, the next start continues where it left off.
+
 The host link printed in the terminal works like a password, so keep it private. To stop, press **Stop FairPlay** in the host console, press Ctrl+C in the terminal, or run `fairplay stop` from any other terminal. Each one ends the room for everyone. Invites survive a restart, guests whose device was already admitted rejoin by themselves, and your host key changes on every start.
 
 `fairplay check` shows what FairPlay found on your computer, if something doesn't work.

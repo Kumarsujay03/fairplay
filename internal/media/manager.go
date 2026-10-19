@@ -68,6 +68,7 @@ type Status struct {
 	Versions string       `json:"versions,omitempty"`
 	EstBytes int64        `json:"estBytes,omitempty"` // predicted disk use when finished
 	Disk     int64        `json:"disk,omitempty"`     // disk use so far
+	Idle     bool         `json:"idle,omitempty"`     // frozen: far enough ahead of the room
 	key      string
 }
 
@@ -91,6 +92,11 @@ type Manager struct {
 	MaxCache int64
 	// Current returns the room's video so pruning never removes it.
 	Current func() string
+	// Playhead returns the room's video, position and whether it plays, so
+	// the encoder can idle once it is far enough ahead of the viewers.
+	Playhead func() (id string, pos float64, playing bool)
+	// runAhead and resumeAt are the idle thresholds in seconds; tests shrink them.
+	runAhead, resumeAt float64
 	// testInputArgs go before -i in the encode; tests slow ffmpeg with them.
 	testInputArgs []string
 }
@@ -123,6 +129,7 @@ func NewManager(ctx context.Context, o Options) (*Manager, error) {
 		items: map[string]Item{}, statuses: map[string]*Status{},
 	}
 	m.enc = DetectEncoder(ctx, o.FFmpeg)
+	m.runAhead, m.resumeAt = 600, 300
 	m.tonemap = HasFilter(o.FFmpeg, "zscale") && HasFilter(o.FFmpeg, "tonemap")
 	return m, nil
 }
@@ -410,6 +417,58 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	}
 	lowerPriority(cmd.Process.Pid)
 
+	// Run ahead, then idle. The host usually watches on the computer that
+	// encodes, and an encoder working flat out through the whole showing is
+	// what makes the host's own player stutter while every guest is fine.
+	// Once the encode is runAhead seconds past the room, the process is
+	// frozen (no CPU, no GPU); it thaws when the lead shrinks to resumeAt.
+	// Nothing happens for a video the room isn't showing.
+	var encodedNow atomic.Value
+	encodedNow.Store(completed)
+	paceDone := make(chan struct{})
+	exited := make(chan struct{}) // closed once ffmpeg has ended
+	go func() {
+		defer close(paceDone)
+		frozen := false
+		thaw := func() {
+			if frozen {
+				_ = resumeProcess(cmd.Process.Pid)
+				frozen = false
+				m.update(it.ID, func(s *Status) { s.Idle = false })
+			}
+		}
+		defer thaw()
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-exited:
+				return
+			case <-t.C:
+			}
+			if m.Playhead == nil {
+				continue
+			}
+			id, pos, _ := m.Playhead()
+			if id != it.ID {
+				thaw()
+				continue
+			}
+			lead := encodedNow.Load().(float64) - pos
+			switch {
+			case !frozen && lead > m.runAhead:
+				if suspendProcess(cmd.Process.Pid) == nil {
+					frozen = true
+					m.update(it.ID, func(s *Status) { s.Idle = true })
+				}
+			case frozen && lead < m.resumeAt:
+				thaw()
+			}
+		}
+	}()
+
 	master := filepath.Join(dir, "master.m3u8")
 	sc := bufio.NewScanner(stdout)
 	var lastEmit, lastDisk time.Time
@@ -427,6 +486,7 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 			}
 			sec := completed + float64(us)/1e6
 			encoded = sec
+			encodedNow.Store(sec)
 			// Playable once a safe lead exists: nobody should ever reach the
 			// encoder's edge, where players would wait for the next segment
 			// at different moments and drift apart.
@@ -456,6 +516,8 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 		}
 	}
 	err = cmd.Wait()
+	close(exited)
+	<-paceDone
 	subs := <-subDone
 	if err != nil && ctx.Err() != nil {
 		// Stopped on purpose (shutdown, Cancel, another file's turn): keep

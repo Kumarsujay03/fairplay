@@ -509,7 +509,12 @@ function MediaSummary({ m }: { m: S.MediaStatus }) {
           </div>
           <div class="row wrap">
             {m.state === 'ready' && <span class="tag ok"><Icon name="check" size={12} /> Ready</span>}
-            {m.state === 'encoding' && <span class="tag warn">Encoding {pct.toFixed(0)}% · {m.speed?.toFixed(1)}×</span>}
+            {m.state === 'encoding' && !m.idle && <span class="tag warn">Encoding {pct.toFixed(0)}% · {m.speed?.toFixed(1)}×</span>}
+            {m.state === 'encoding' && m.idle && (
+              <span class="tag neutral" title="Far enough ahead of the room; it continues when the lead shrinks to 5 minutes, so this computer stays free while you watch">
+                Encoding {pct.toFixed(0)}% · 10 min ahead, resting
+              </span>
+            )}
             {m.state === 'probing' && <span class="tag neutral">Reading file…</span>}
             {m.state === 'error' && <span class="tag bad">Error</span>}
             {m.playable && m.state !== 'ready' && <span class="tag ok">Playable now</span>}

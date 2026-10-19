@@ -174,6 +174,7 @@ func start(o options) {
 	h := hub.New(store, mm, hub.Settings{RoomName: o.name, AutoAdmit: o.autoAdmit, Reactions: true, MaxGuests: o.maxGuests, InterMinutes: o.interMinutes, Versions: o.versions, Pace: o.pace})
 	srv := server.New(store, h, mm, webui.FS())
 	mm.Current = h.CurrentMedia
+	mm.Playhead = h.Playhead
 	if freed := mm.Prune(mm.MaxCache, ""); freed > 0 {
 		log.Printf("freed %.1f GB of older prepared videos (limit %.0f GB, change with -cache-max)", float64(freed)/1e9, o.cacheMaxGB)
 	}

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -659,5 +661,64 @@ func TestPartialPlanMismatch(t *testing.T) {
 	}
 	if kept, err := savePartial(empty, partial{Rungs: []string{"360p"}, Audio: 1}, 3); err == nil || kept != 0 {
 		t.Errorf("empty playlists: %v %v", kept, err)
+	}
+}
+
+// TestEncoderIdlesWhenAhead: with the room far behind, the encoder is frozen
+// once it is runAhead seconds past the room, and thaws when the room catches
+// up to resumeAt, finishing the file.
+func TestEncoderIdlesWhenAhead(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	root := t.TempDir()
+	src := filepath.Join(root, "Clip.mp4")
+	gen := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=24", "-f", "lavfi", "-i", "sine=frequency=440",
+		"-t", "16", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-g", "7", "-c:a", "aac", "-ac", "2", src)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	m, err := NewManager(context.Background(), Options{Root: root, Cache: t.TempDir(), FFmpeg: "ffmpeg", FFprobe: "ffprobe"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.testInputArgs = []string{"-readrate", "2"} // 16 s of film takes ~8 s
+	m.runAhead, m.resumeAt = 4, 2
+	items, _, _ := m.List()
+	id := items[0].ID
+	var pos atomic.Value
+	pos.Store(0.0)
+	m.Playhead = func() (string, float64, bool) { return id, pos.Load().(float64), true }
+	m.Prepare(id)
+	wait := func(cond func(Status) bool, what string) Status {
+		for i := 0; i < 300; i++ {
+			if st, _ := m.Status(id); cond(st) {
+				return st
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		st, _ := m.Status(id)
+		t.Fatalf("timed out waiting for %s: %+v", what, st)
+		return st
+	}
+	st := wait(func(s Status) bool { return s.Idle }, "idle")
+	if st.Encoded < 4 {
+		t.Fatalf("froze at %.1fs, before the lead reached 4 s", st.Encoded)
+	}
+	// Progress already in the pipe may still arrive; after that, nothing moves.
+	time.Sleep(1500 * time.Millisecond)
+	e1, _ := m.Status(id)
+	time.Sleep(3 * time.Second)
+	e2, _ := m.Status(id)
+	if e2.Encoded > e1.Encoded+0.5 || e2.State == StateReady {
+		t.Fatalf("encoder kept going while frozen: %.1f -> %.1f", e1.Encoded, e2.Encoded)
+	}
+	pos.Store(e2.Encoded + 1) // the room catches up: lead < resumeAt
+	frozenAt := e2.Encoded
+	wait(func(s Status) bool { return !s.Idle && s.Encoded > frozenAt+1 }, "thaw")
+	pos.Store(math.Inf(1)) // the room stays ahead from here: no second freeze
+	if st = wait(func(s Status) bool { return s.State == StateReady }, "ready"); st.Idle {
+		t.Fatalf("idle flag left set: %+v", st)
 	}
 }

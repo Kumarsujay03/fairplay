@@ -411,6 +411,14 @@ func (h *Hub) CurrentMedia() string {
 	return h.room.State().MediaID
 }
 
+// Playhead is the room's video, position and play state, for the encoder.
+func (h *Hub) Playhead() (string, float64, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	s := h.room.State()
+	return s.MediaID, s.PositionAt(h.now()), s.Playing
+}
+
 func (h *Hub) Tunnel() TunnelInfo {
 	h.mu.Lock()
 	defer h.mu.Unlock()
