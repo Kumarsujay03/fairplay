@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.8 (2026-10-19)
+
+- New **Preparing speed** setting (`-prepare`). **Cool**, the default, paces the encoder at twice playback speed with a quarter of the CPU threads at the lowest priority: about one or two cores, so the computer stays quiet and cool while you watch on it, and viewers can never catch up with it. **Fast** uses half the CPU flat out and has a 2-hour film ready in minutes
+- Fix: the host's picture could run a few seconds behind the sound and behind everyone else while the clock said "in sync", when the computer was too busy to decode the original quality in time. The player now watches the frame actually on screen; when it falls behind, it switches to a lighter quality and restarts the decoder, and a player that can't catch up by playing slightly faster jumps instead
+- Smaller versions are encoded with the `veryfast` preset again: `fast` cost twice the CPU for a difference nobody sees at 720p
+
 ## 0.1.7 (2026-10-19)
 
 - Fix: the host's own player froze on "Buffering" or "Playback error" while guests played on, because preparing the video took almost all of the computer's CPU. ffmpeg now runs at the lowest priority from the start and uses at most half the CPU threads, so the browser on the host's computer always comes first

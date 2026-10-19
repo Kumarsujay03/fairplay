@@ -37,6 +37,8 @@ type Settings struct {
 	InterMinutes int `json:"interMinutes"`
 	// Versions is how many quality versions are prepared: original, balanced or full.
 	Versions string `json:"versions"`
+	// Pace is how fast videos are prepared: cool (paced, about one core) or fast.
+	Pace string `json:"pace"`
 }
 
 type TunnelInfo struct {
@@ -135,8 +137,10 @@ func New(a *auth.Store, m *media.Manager, s Settings) *Hub {
 		s.InterMinutes = 5
 	}
 	s.Versions = media.NormalizeVersions(s.Versions)
+	s.Pace = media.NormalizePace(s.Pace)
 	if m != nil {
 		m.SetVersions(s.Versions)
+		m.SetPace(s.Pace)
 	}
 	h := &Hub{
 		auth: a, media: m, room: room.New(), settings: s,
@@ -618,8 +622,10 @@ func (h *Hub) onHost(c *client, m inMsg) {
 		}
 		ns.InterMinutes = clampInt(ns.InterMinutes, 1, 120)
 		ns.Versions = media.NormalizeVersions(ns.Versions)
+		ns.Pace = media.NormalizePace(ns.Pace)
 		if h.media != nil {
 			h.media.SetVersions(ns.Versions)
+			h.media.SetPace(ns.Pace)
 		}
 		h.mu.Lock()
 		h.settings = ns

@@ -407,3 +407,32 @@ func TestFixMasterBandwidth(t *testing.T) {
 		t.Fatal("measured bandwidth was overwritten")
 	}
 }
+
+func TestPaceArgs(t *testing.T) {
+	info := Info{Duration: 100, Video: &VideoInfo{Codec: "h264", Width: 1920, Height: 800, PixFmt: "yuv420p", Kbps: 3000}}
+	cool, _, _ := buildArgs("in.mkv", info, softwareEncoder, false, VersionsBalanced, PaceCool, true)
+	fast, _, _ := buildArgs("in.mkv", info, softwareEncoder, false, VersionsBalanced, PaceFast, true)
+	old, _, _ := buildArgs("in.mkv", info, softwareEncoder, false, VersionsBalanced, PaceCool, false)
+	has := func(args []string, s string) bool {
+		return strings.Contains(" "+strings.Join(args, " ")+" ", " "+s+" ")
+	}
+	if !has(cool, "-readrate 2") || !has(cool, "-readrate_initial_burst 600") {
+		t.Fatalf("cool must be paced: %v", cool)
+	}
+	if has(fast, "-readrate 2") || has(old, "-readrate 2") {
+		t.Fatal("fast mode and an old ffmpeg must not be paced")
+	}
+	// Pacing is an input option: it must come before -i.
+	ri, ii := -1, -1
+	for i, a := range cool {
+		if a == "-readrate" {
+			ri = i
+		}
+		if a == "-i" {
+			ii = i
+		}
+	}
+	if ri < 0 || ri > ii {
+		t.Fatalf("-readrate must precede -i: %v", cool)
+	}
+}

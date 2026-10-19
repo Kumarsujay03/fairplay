@@ -38,6 +38,8 @@ export function Player() {
   const [mySub, setMySub] = useState<string | null>(null)
   const room = S.prefs.value
   const quality = myQ ?? room.quality
+  const qualityRef = useRef(quality)
+  qualityRef.current = quality
   const audio = myAudio ?? room.audio
   const sub = mySub ?? room.sub
   const [menu, setMenu] = useState(false)
@@ -78,15 +80,8 @@ export function Player() {
       const hls = hlsRef.current
       if (hls && bufferedAhead(v) > 2) {
         // The video is downloaded but the picture doesn't move: this computer
-        // can't decode it fast enough (often because it is also preparing the
-        // video). Step down one quality and nudge the decoder along.
-        const cur = hls.currentLevel >= 0 ? hls.currentLevel : hls.loadLevel
-        if (cur > 0 && hls.autoLevelCapping !== cur - 1) {
-          hls.autoLevelCapping = cur - 1
-          hls.nextLevel = cur - 1
-          S.showToast('This computer is busy, using a lighter quality for now')
-        }
-        v.currentTime = v.currentTime + 0.05
+        // can't decode it fast enough.
+        lighten()
         return
       }
       if (hls && n <= 2) {
@@ -184,6 +179,68 @@ export function Player() {
       drift: Math.round(r.drift * 1000),
       q: lv ? qualityName(lv.width, lv.height) : '',
     })
+  }
+
+  // ---- picture lag ----
+  // The clock (driven by the sound) can be exactly on time while the picture
+  // on screen is seconds behind it, when this computer can't decode the
+  // video fast enough (for example while it is also preparing the video).
+  // Watch which frame is actually shown, and when the picture falls behind,
+  // switch to a lighter quality and restart the decoder at the right spot.
+  useEffect(() => {
+    const v = videoRef.current as HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: (now: number, meta: { mediaTime: number }) => void) => number
+      cancelVideoFrameCallback?: (id: number) => void
+    }
+    if (!v.requestVideoFrameCallback) return
+    let id = 0
+    let behindSince = 0
+    let lastFrame = performance.now()
+    const onFrame = (_now: number, meta: { mediaTime: number }) => {
+      lastFrame = performance.now()
+      const lag = v.currentTime - meta.mediaTime
+      if (!v.paused && !v.seeking && lag > 0.6) {
+        if (!behindSince) behindSince = lastFrame
+        else if (lastFrame - behindSince > 2500) {
+          behindSince = 0
+          lighten()
+        }
+      } else {
+        behindSince = 0
+      }
+      id = v.requestVideoFrameCallback!(onFrame)
+    }
+    id = v.requestVideoFrameCallback(onFrame)
+    // No new frame at all for a while, although the clock runs: same cure.
+    const timer = setInterval(() => {
+      if (!v.paused && !v.seeking && v.readyState >= 3 && performance.now() - lastFrame > 3000) {
+        lastFrame = performance.now()
+        lighten()
+      }
+    }, 1000)
+    return () => {
+      v.cancelVideoFrameCallback?.(id)
+      clearInterval(timer)
+    }
+  }, [])
+
+  /** One quality lighter (for this viewer only), and a fresh decoder. */
+  function lighten() {
+    const v = videoRef.current!
+    const hls = hlsRef.current
+    if (hls) {
+      const cur = hls.currentLevel >= 0 ? hls.currentLevel : hls.loadLevel
+      if (cur > 0) {
+        hls.autoLevelCapping = cur - 1
+        hls.currentLevel = cur - 1 // switch now, dropping the backlog
+        // Back to automatic choice (now capped) unless a quality was picked.
+        if (qualityRef.current === 'auto') setTimeout(() => (hls.loadLevel = -1), 500)
+        S.showToast('This computer is busy, using a lighter quality so the picture keeps up')
+        return
+      }
+    }
+    // Already the lightest: a seek restarts the decoder on the current frame.
+    v.currentTime = v.currentTime + 0.05
   }
 
   // ---- media source ----

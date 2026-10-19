@@ -1075,6 +1075,18 @@ function RoomSettings() {
           {versionHint[s.versions || 'balanced']} The original picture is streamed untouched when the browser can play it (most H.264 files), so quality is the best possible and it takes no extra encoding.
         </span>
       </label>
+      <label class="col tight">
+        <span class="label dim">Preparing speed</span>
+        <select class="input select" value={s.pace || 'cool'} onChange={(e) => set({ pace: (e.target as HTMLSelectElement).value as S.HostSettings['pace'] })}>
+          <option value="cool">Cool · quiet, about one CPU core (recommended)</option>
+          <option value="fast">Fast · half the CPU, finishes sooner</option>
+        </select>
+        <span class="caption muted">
+          {(s.pace || 'cool') === 'cool'
+            ? 'Prepares at twice playback speed, a few minutes ahead, so viewers never catch up and your computer stays quiet and cool. A 2-hour film is fully prepared after about an hour; skipping ahead is limited to what is prepared.'
+            : 'Uses half of the CPU threads flat out. The computer gets warmer and the fan louder, but a 2-hour film is ready in a few minutes.'}
+        </span>
+      </label>
       <label class="row">
         <span class="dim grow">Maximum guests</span>
         <input class="input num" type="number" min={1} max={50} value={s.maxGuests} onChange={(e) => set({ maxGuests: parseInt((e.target as HTMLInputElement).value) || 12 })} />
