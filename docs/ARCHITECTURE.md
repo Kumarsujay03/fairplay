@@ -35,7 +35,7 @@ FairPlay is a single binary you run on your own computer. It serves a small web 
 - Floating chat in the bottom right. The panel is transparent and only the WhatsApp-style bubbles have a background. Four messages are visible, the oldest is faded, and the stack fades away when chat is quiet.
 - A composer with a send button, and an emoji reaction bar beneath it.
 - Reactions float up over the video for everyone, and are rate limited.
-- Late joiners see the last 50 messages. The bubbles come up with each new message for its reading time (4 s plus 60 ms per character, 5–12 s) and whenever the controls are up; the text box, send button and reaction bar appear only under the pointer (or with the controls on a touchscreen); a reaction floats over the picture and never brings the chat up.
+- Late joiners see the last 50 messages. A new message brings up only its own bubble (older ones stay hidden until the controls or the pointer bring the stack up), for its reading time (4 s plus 60 ms per character, 5–12 s) and whenever the controls are up; the text box, send button and reaction bar appear only under the pointer (or with the controls on a touchscreen); a reaction floats over the picture and never brings the chat up.
 - A viewer list showing each name, status (live, solo, buffering, syncing) and ping. You can rename yourself there.
 
 **Host**
