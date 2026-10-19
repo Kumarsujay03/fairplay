@@ -27,15 +27,15 @@ FairPlay is a single binary you run on your own computer. It serves a small web 
 - **Intermission**: a global pause with a countdown and a "+5 min" button.
 - Adaptive quality per viewer, with up to three rungs between 1080p and 360p chosen from the source. Bandwidth picks the rung automatically, with a manual override.
 - Audio track and subtitle selection. Subtitles come from the file or from a sidecar .srt, .vtt or .ass.
-- Volume, mute, fullscreen, picture-in-picture and keyboard shortcuts.
-- A screen lock. While locked, taps, clicks, double taps and keys do nothing, the controls and chat stay hidden, and a tap shows a centred "tap to unlock" pill for a moment. The host's click on the picture never pauses the room; it shows the controls, as a tap does on a phone.
+- Volume up to 200%, mute, fullscreen, picture-in-picture and keyboard shortcuts. Above 100% the element plays at full volume into a Web Audio gain node; the node is created on the first boost, which is a user gesture, because a media element wired to a suspended AudioContext is silent. iPhones and iPads stay at 100%, where Web Audio and the native HLS player don't mix.
+- A screen lock, the button at the bottom right of the controls. While locked, play, pause, seeking and skipping are frozen (buttons, the seek bar, taps on the picture and their keys); the controls stay on screen, and volume, chat, reactions, fullscreen and the lock button keep working. The host's click on the picture never pauses the room in any case; it shows the controls, as a tap does on a phone.
 - A playlist: queue files, reorder them, and move to the next. When a file ends, the next one loads and plays.
 
 **Social**
 - Floating chat in the bottom right. The panel is transparent and only the WhatsApp-style bubbles have a background. Four messages are visible, the oldest is faded, and the stack fades away when chat is quiet.
 - A composer with a send button, and an emoji reaction bar beneath it.
 - Reactions float up over the video for everyone, and are rate limited.
-- Late joiners see the last 50 messages. Chat bubbles fade 10 seconds after the last message, on phones too.
+- Late joiners see the last 50 messages. The bubbles come up with each new message for its reading time (4 s plus 60 ms per character, 5–12 s) and whenever the controls are up; the text box, send button and reaction bar appear only under the pointer (or with the controls on a touchscreen); a reaction floats over the picture and never brings the chat up.
 - A viewer list showing each name, status (live, solo, buffering, syncing) and ping. You can rename yourself there.
 
 **Host**

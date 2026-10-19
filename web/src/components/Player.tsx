@@ -8,7 +8,7 @@ import { Chat } from './Chat'
 import { Reactions } from './Reactions'
 import { Peers, ViewerStack } from './Peers'
 import { LobbyToasts } from './Lobby'
-import { fmtGap, fmtTime, navigate, pingClass, qualityLabel, qualityName } from '../util'
+import { fmtGap, fmtTime, pingClass, qualityLabel, qualityName } from '../util'
 
 interface Level {
   index: number
@@ -46,6 +46,11 @@ function hlsLogger(log: (ev: string, d: Record<string, unknown>) => void) {
   return { trace: noop, debug: noop, log: noop, info: noop, warn: fwd('hls.warn'), error: fwd('hls.err') }
 }
 
+/** The host console opens beside the player, in its own tab, so opening it never stops the host's own playback. */
+function openHostConsole() {
+  window.open('/host', 'fairplay-host')
+}
+
 /** Seconds of media buffered ahead of the playhead, 0 when the playhead is outside every range. */
 function bufferedAhead(v: HTMLVideoElement): number {
   const b = v.buffered
@@ -66,7 +71,16 @@ export function Player() {
   const [paused, setPaused] = useState(true)
   const [buffered, setBuffered] = useState(0)
   const [muted, setMuted] = useState(false)
+  // Volume runs 0–2. Up to 1 it is the element's own volume; above 1 the sound
+  // goes through a Web Audio gain node, which is how a web page gets VLC's
+  // 200%. The node is created on the first boost (a user gesture), never
+  // before, because a media element wired to a suspended AudioContext is
+  // silent. iPhones and iPads sit this out: Web Audio and the native HLS
+  // player don't mix there.
   const [volume, setVolume] = useState(1)
+  const boost = useRef<{ ctx: AudioContext; gain: GainNode } | null>(null)
+  const boostOK = typeof AudioContext !== 'undefined' && !/iPhone|iPad|iPod/.test(navigator.userAgent)
+  const MAX_VOL = boostOK ? 2 : 1
   const [blocked, setBlocked] = useState(false)
   const [soundOff, setSoundOff] = useState(false) // started muted because the browser blocked sound
   const [levels, setLevels] = useState<Level[]>([])
@@ -87,22 +101,14 @@ export function Player() {
   const lastTouch = useRef(0)
   const [isFs, setIsFs] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
-  // Screen lock: taps, clicks and keys do nothing until unlocked, so a phone
-  // in a hand (or a cat on a keyboard) can't pause or skip for everyone.
+  // Screen lock: play, pause, seeking and skipping are frozen, so brushing
+  // the screen can't move the film for everyone. The controls stay on screen;
+  // volume, chat, reactions, fullscreen and the lock button itself keep working.
   const [locked, setLocked] = useState(false)
-  const [lockHint, setLockHint] = useState(false)
-  const lockHintTimer = useRef(0)
-  const flashLock = () => {
-    setLockHint(true)
-    clearTimeout(lockHintTimer.current)
-    lockHintTimer.current = window.setTimeout(() => setLockHint(false), 2500)
-  }
   const lock = (on: boolean) => {
     logEv('user.lock', { on })
     setLocked(on)
-    setShowUi(!on)
-    if (on) flashLock()
-    else setLockHint(false)
+    setShowUi(true)
   }
   const recoverAt = useRef(-1e9) // when hls.js last recovered from a media error
   const [inPip, setInPip] = useState(false)
@@ -182,7 +188,8 @@ export function Player() {
     }
     const onVol = () => {
       setMuted(v.muted)
-      setVolume(v.volume)
+      // Below 100% the element's volume is the truth; above it the slider keeps the boost.
+      setVolume((cur) => (v.volume < 1 || cur <= 1 ? v.volume : cur))
     }
     v.addEventListener('pause', onPause)
     v.addEventListener('play', onPlay)
@@ -195,6 +202,16 @@ export function Player() {
     try {
       const saved = parseFloat(localStorage.getItem('fp.volume') || '')
       if (saved >= 0 && saved <= 1) v.volume = saved
+      else if (saved > 1 && saved <= MAX_VOL) {
+        // A remembered boost waits for the first gesture, when an AudioContext may start.
+        v.volume = 1
+        setVolume(saved)
+        const arm = () => {
+          applyGain(saved)
+          for (const t of ['pointerdown', 'keydown', 'touchstart']) document.removeEventListener(t, arm, true)
+        }
+        for (const t of ['pointerdown', 'keydown', 'touchstart']) document.addEventListener(t, arm, true)
+      }
     } catch {}
 
     const mq = matchMedia('(max-width: 720px) and (orientation: portrait)')
@@ -441,7 +458,7 @@ export function Player() {
 
   // Auto-hide controls while playing
   useEffect(() => {
-    if (!showUi || paused || menu || peersOpen) return
+    if (!showUi || paused || menu || peersOpen || locked) return
     const t = setTimeout(() => setShowUi(false), 3000)
     return () => clearTimeout(t)
   }, [showUi, paused, menu, peersOpen, cur > 0])
@@ -450,8 +467,8 @@ export function Player() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).closest('input, textarea, select')) return
-      if (locked) {
-        flashLock()
+      if (locked && [' ', 'k', 'j', 'l', 'g', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        e.preventDefault()
         return
       }
       const v = videoRef.current!
@@ -483,11 +500,11 @@ export function Player() {
           break
         case 'ArrowUp':
           e.preventDefault()
-          v.volume = Math.min(1, v.volume + 0.1)
+          setVol(volume + 0.1)
           break
         case 'ArrowDown':
           e.preventDefault()
-          v.volume = Math.max(0, v.volume - 0.1)
+          setVol(volume - 0.1)
           break
         default:
           return
@@ -624,10 +641,33 @@ export function Player() {
     }
   }
 
-  const setVol = (val: number) => {
+  /** Route the element's sound through a gain node set to g (1 = unchanged). */
+  function applyGain(g: number) {
     const v = videoRef.current!
-    v.volume = val
+    if (g <= 1 && !boost.current) return
+    if (!boost.current) {
+      try {
+        const ctx = new AudioContext()
+        const gain = ctx.createGain()
+        ctx.createMediaElementSource(v).connect(gain)
+        gain.connect(ctx.destination)
+        boost.current = { ctx, gain }
+        logEv('user.boost', {})
+      } catch {
+        return
+      }
+    }
+    boost.current.ctx.resume().catch(() => {})
+    boost.current.gain.gain.value = g
+  }
+
+  const setVol = (val: number) => {
+    val = Math.round(Math.max(0, Math.min(MAX_VOL, val)) * 100) / 100
+    const v = videoRef.current!
+    v.volume = Math.min(1, val)
     v.muted = val === 0
+    applyGain(Math.max(1, val))
+    setVolume(val)
     if (val > 0) setSoundOff(false)
     try {
       localStorage.setItem('fp.volume', String(val))
@@ -680,15 +720,13 @@ export function Player() {
   return (
     <div
       ref={wrap}
-      class={`player ${(showUi || paused) && !locked ? 'ui-on' : 'ui-off'} ${locked ? 'locked' : ''} ${compact ? 'compact' : ''} ${chatOpen ? 'chat-on' : ''}`}
+      class={`player ${showUi || paused || locked ? 'ui-on' : 'ui-off'} ${locked ? 'locked' : ''} ${compact ? 'compact' : ''} ${chatOpen ? 'chat-on' : ''}`}
       onMouseMove={() => {
-        if (locked) return
         // Phones send a fake mouse move with every tap; the tap itself decides.
         if (performance.now() - lastTouch.current > 800) setShowUi(true)
       }}
       onTouchStart={(e) => {
         lastTouch.current = performance.now()
-        if (locked) return
         // A tap on the picture toggles the controls (the video's click
         // handler); a touch anywhere else just keeps them on screen.
         if (e.target !== videoRef.current) setShowUi(true)
@@ -704,12 +742,12 @@ export function Player() {
           // plays/pauses, except for the host, whose click would pause the
           // whole room: the host uses the button or the space bar.
           onClick={() => {
-            if (locked) return flashLock()
+            if (locked) return // the picture is locked; the controls still work
             if (soundOff) return unmute()
             if (compact || touch || canControl || performance.now() - lastTouch.current < 800) setShowUi((on) => !on)
             else togglePlay()
           }}
-          onDblClick={() => !locked && toggleFs()}
+          onDblClick={toggleFs}
         >
           {playable &&
             subs.map((s) => <track key={s.id} id={s.id} kind="subtitles" src={`/hls/${m!.id}/${s.url}`} srclang={s.lang} label={s.label} />)}
@@ -738,7 +776,7 @@ export function Player() {
           <div class="row">
             <ViewerStack onClick={() => setPeersOpen(!peersOpen)} />
             {me?.role === 'host' && (
-              <button class="icon-btn" title="Host console" aria-label="Host console" onClick={() => navigate('/host')}>
+              <button class="icon-btn" title="Host console" aria-label="Host console" onClick={() => openHostConsole()}>
                 <Icon name="settings" />
               </button>
             )}
@@ -759,12 +797,6 @@ export function Player() {
           onPlay={togglePlay}
         />
 
-        {locked && (
-          <button class={`lock-pill ${lockHint ? 'show' : ''}`} onClick={() => lock(false)} aria-label="Unlock screen">
-            <Icon name="lock" size={20} /> Screen locked · tap to unlock
-          </button>
-        )}
-
         {soundOff && (
           <button class="unmute-pill" onClick={unmute}>
             <Icon name="mute" size={18} /> Sound is off · tap to unmute
@@ -776,7 +808,7 @@ export function Player() {
         {/* Chat */}
         {!compact && (
           <div class="chat-dock">
-            <Chat open={chatOpen} />
+            <Chat open={chatOpen} uiOn={showUi || paused || locked} />
           </div>
         )}
 
@@ -789,16 +821,16 @@ export function Player() {
             seekMax={seekMax || 0}
             room={mode === 'solo' ? report.target : -1}
             limit={canControl ? -1 : Math.min(report.target, seekMax || Infinity)}
-            onSeek={seekTo}
+            onSeek={locked ? () => {} : seekTo}
           />
           <div class="control-row">
-            <button class="icon-btn" onClick={togglePlay} aria-label={paused ? 'Play' : 'Pause'} title="Play / pause (space)">
+            <button class="icon-btn" disabled={locked} onClick={togglePlay} aria-label={paused ? 'Play' : 'Pause'} title={locked ? 'Locked' : 'Play / pause (space)'}>
               <Icon name={paused ? 'play' : 'pause'} />
             </button>
-            <button class="icon-btn" onClick={() => skip(-10)} aria-label="Back 10 seconds" title="Back 10s (←)">
+            <button class="icon-btn" disabled={locked} onClick={() => skip(-10)} aria-label="Back 10 seconds" title={locked ? 'Locked' : 'Back 10s (←)'}>
               <Icon name="back10" />
             </button>
-            <button class="icon-btn" onClick={() => skip(10)} aria-label="Forward 10 seconds" title="Forward 10s (→)">
+            <button class="icon-btn" disabled={locked} onClick={() => skip(10)} aria-label="Forward 10 seconds" title={locked ? 'Locked' : 'Forward 10s (→)'}>
               <Icon name="fwd10" />
             </button>
             <div class="volume row">
@@ -808,12 +840,15 @@ export function Player() {
               <input
                 type="range"
                 min={0}
-                max={1}
+                max={MAX_VOL}
                 step={0.02}
                 value={muted ? 0 : volume}
+                class={volume > 1 ? 'boosted' : ''}
                 aria-label="Volume"
+                title={boostOK ? 'Volume, up to 200%' : 'Volume'}
                 onInput={(e) => setVol(parseFloat((e.target as HTMLInputElement).value))}
               />
+              {volume > 1 && !muted && <span class="vol-boost mono">{Math.round(volume * 100)}%</span>}
             </div>
             <span class="mono time">
               {fmtTime(cur)} / {fmtTime(duration)}
@@ -927,7 +962,12 @@ export function Player() {
                 <Icon name="pip" />
               </button>
             )}
-            <button class="icon-btn" onClick={() => lock(true)} title="Lock the screen: taps and keys do nothing until unlocked" aria-label="Lock screen">
+            <button
+              class={`icon-btn ${locked ? 'active lock-on' : ''}`}
+              onClick={() => lock(!locked)}
+              title={locked ? 'Unlock play, pause and seeking' : 'Lock play, pause and seeking; volume and chat keep working'}
+              aria-label={locked ? 'Unlock screen' : 'Lock screen'}
+            >
               <Icon name="lock" />
             </button>
             <button class="icon-btn" onClick={toggleFs} title="Fullscreen (f)">
@@ -987,7 +1027,7 @@ function CenterOverlay(p: {
           <Icon name="film" size={40} />
           <div class="h18">Waiting for the host to pick a video</div>
           {S.you.value?.role === 'host' && (
-            <button class="btn btn-primary" onClick={() => navigate('/host')}>
+            <button class="btn btn-primary" onClick={() => openHostConsole()}>
               Open host console
             </button>
           )}

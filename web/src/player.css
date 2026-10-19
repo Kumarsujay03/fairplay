@@ -19,6 +19,8 @@
 .control-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .time { font-size: 13px; margin-left: 6px; white-space: nowrap; }
 .volume input[type='range'] { width: 84px; accent-color: var(--text); }
+.volume input[type='range'].boosted { accent-color: var(--amber); }
+.vol-boost { font-size: 11px; color: var(--amber); margin-left: 4px; min-width: 32px; }
 .live-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px 8px 10px; border-radius: 999px; font-size: 13px; font-weight: 500; background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.14); color: var(--text-2); white-space: nowrap; }
 .live-toggle.on { background: rgba(46, 213, 115, 0.16); border-color: rgba(46, 213, 115, 0.5); color: var(--live); cursor: default; }
 .live-toggle:not(.on):hover { border-color: var(--live); color: var(--live); }
@@ -63,7 +65,13 @@
 
 /* Chat */
 .chat-dock { position: absolute; right: 24px; bottom: 112px; width: 300px; z-index: 4; }
-.ui-off .chat-dock .composer, .ui-off .chat-dock .reaction-bar { opacity: 0.0; pointer-events: none; }
+/* With the text box away, the bubbles sit just above the seek bar; when the
+   pointer arrives the box and the reaction bar unfold and push them up. */
+.chat-float { min-height: 140px; justify-content: flex-end; }
+.chat-float .composer { max-height: 56px; }
+.chat-float .reaction-bar { max-height: 120px; }
+.chat-float .composer, .chat-float .reaction-bar { overflow: hidden; transition: max-height 0.3s ease, opacity 0.25s ease, margin-top 0.3s ease; }
+.chat-float.composer-hidden .composer, .chat-float.composer-hidden .reaction-bar { max-height: 0; opacity: 0; margin-top: -8px; pointer-events: none; }
 .chat { display: flex; flex-direction: column; gap: 8px; transition: opacity 0.6s; }
 .chat-float.faded .chat-list { opacity: 0; }
 .chat-list { display: flex; flex-direction: column; gap: 8px; transition: opacity 0.6s; }
@@ -210,10 +218,10 @@ video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-family: var(--fo
 .seekbar .locked { background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.06) 0 4px, transparent 4px 8px); }
 .unmute-pill { position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%); z-index: 6; display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 999px; background: var(--amber); color: var(--on-amber); font-weight: 600; font-size: 14px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); animation: toast-in 0.2s ease-out; }
 .player.compact .unmute-pill { bottom: 56px; font-size: 13px; padding: 8px 14px; }
-/* Screen lock: a centred pill that appears for a moment on every tap while locked. */
-.lock-pill { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 7; display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 999px; background: rgba(13, 16, 24, 0.85); border: 1px solid rgba(255, 255, 255, 0.14); color: var(--text-1); font-weight: 600; font-size: 14px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); opacity: 0; pointer-events: none; transition: opacity 0.25s; }
-.lock-pill.show { opacity: 1; pointer-events: auto; }
-.player.locked .chat-dock .chat-list { opacity: 0; }
+/* Screen lock: the lock button glows amber while the picture is locked. */
+.icon-btn.lock-on { color: var(--amber); }
+.player.locked .seekbar { pointer-events: none; opacity: 0.55; }
+.player.locked .icon-btn:disabled { opacity: 0.35; cursor: default; }
 .chat-count { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text-3); flex: none; }
 .chat-count.full { color: var(--danger); }
 .bubble-text { word-break: break-word; overflow-wrap: anywhere; }

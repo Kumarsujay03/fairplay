@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.3 (2026-10-20)
+
+- Volume up to 200%, as in VLC. Above 100% the sound goes through a Web Audio gain node; the slider turns amber and shows the percentage. ↑ and ↓ step by 10% all the way. Remembered between showings. Not on iPhone and iPad, where Web Audio and the native player don't mix
+- The screen lock now freezes play, pause, seeking and skipping (buttons, seek bar, picture taps and their keys), while volume, chat, reactions, fullscreen and the lock button itself keep working and the controls stay on screen. The centred "tap to unlock" pill is gone; the lock button at the bottom right glows amber while locked and unlocks on a second press
+- Chat shows itself by what happens, not by hovering. A new message brings the bubbles up for its reading time (4 s plus 60 ms per character, 5–12 s), and they stay up whenever the controls are up; a reaction only floats over the picture and never brings the chat up; the text box, send button and reaction bar appear only when the pointer is over the chat corner (or with the controls, on a touchscreen); until then the bubbles sit just above the seek bar and slide up when the box unfolds
+- Opening the host console from the player (the gear in the top bar, or "Open host console") opens it in its own tab, so the host's own playback never stops
+- New screenshots in the README and docs, taken on a clip generated with ffmpeg
+- Fix: a relative `-media` or `-cache` path made every encode fail with "Error opening input files", because ffmpeg runs inside the cache folder. Both paths are made absolute first
+
 ## 0.3.2 (2026-10-20)
 
 - An event log runs for the whole showing, always on, at `~/.config/fairplay/logs/fairplay-<date>-<time>.jsonl` (one JSON object per line; `fairplay logs` lists the files and some `jq` filters). It records every room state change (play, pause, seek, who did it, the reason), every viewer's status once a second (position against the room clock, drift, ping, buffering, seconds buffered ahead, dropped frames, quality, bandwidth estimate, tab visibility), every command and host-console action, chat and reactions, joins and leaves, the exact ffmpeg command and the encoder's progress, every HLS request with its size and how long it took, and what each player saw in its browser: stalls, seeks, quality switches, hls.js errors, the sync engine's nudges and hard seeks, and the viewer's own clicks. When someone buffers or falls behind, the log says what every part of FairPlay was doing at that second. The 30 newest files are kept

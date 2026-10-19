@@ -15,7 +15,8 @@ Watch videos together, perfectly in sync. FairPlay is one small program you run 
 - **Any video file.** MKV, MP4, AVI, HEVC and more are converted by ffmpeg into adaptive quality, up to 1080p. Multiple audio tracks and subtitles are kept, and playback starts while the file is still converting. On Linux with Intel or AMD graphics the conversion runs on the GPU, and ffmpeg always runs at the lowest priority with half the CPU threads, so the host's own player stays smooth.
 - **Floating chat and Telegram-style animated reactions.** Pick from more than 600 animated emoji. Each one pops in with a burst and floats up over the chat. Scroll back through the whole chat session. The host can hide chat for any viewer.
 - **Your language, your quality.** Tracks are named by language. The host picks audio, subtitles and quality for the room, and anyone can switch to their own. Choose 1080p HD, 720p SD or 480p data saver, or Auto, which gives a laptop 1080p and a phone 720p. The host's own player plays one fixed quality, since it streams from its own computer.
-- **Screen lock.** A lock button in the player. While locked, taps, clicks and keys do nothing, so a phone in a hand can't pause or skip for everyone. Chat bubbles fade on their own 10 seconds after the last message.
+- **Screen lock.** A lock button at the bottom right of the player. While it glows, play, pause, seeking and skipping are frozen, so a phone in a hand can't move the film for everyone; volume, chat and reactions keep working. Chat bubbles show up with each new message and with the controls, and fade after reading time, 5 to 12 seconds depending on the message's length; the text box appears when you move to the chat corner.
+- **Volume to 200%.** Like VLC: above 100% the sound is amplified in the browser, for quiet films and quiet laptops.
 - **Host controls.** A lobby, co-hosts, a playlist, kick, revoke, room lock, and the ping of every viewer.
 - **Private by default.** Each person gets a personal invite link, the host admits every new device, and a bot shield protects the public link.
 - **Light.** One 8 MB binary that uses about 8 MB of memory.
@@ -227,10 +228,10 @@ The server is the clock. Each browser pings it every 2 seconds and estimates its
 | Space or K | Play or pause |
 | ← or J | Back 10 s |
 | → or L | Forward 10 s |
-| ↑ or ↓ | Volume |
+| ↑ or ↓ | Volume, 10% steps up to 200% |
 | M | Mute |
 | F | Fullscreen |
-| Lock button | Lock the screen: taps and keys do nothing until you tap the lock again |
+| Lock button | Freeze play, pause, seeking and skipping until you press the lock again. Volume and chat keep working |
 | C | Show or hide chat |
 | G | Back to live |
 | Enter | Start typing in chat |
