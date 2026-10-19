@@ -2,6 +2,11 @@
 
 ## 0.2.3 (2026-10-19)
 
+- The encoder runs ahead, then rests. It prepares at full speed until it is 10 minutes ahead of the room, then the process is frozen (no CPU, no GPU) and thaws when the lead shrinks to 5 minutes. The host usually watches on the computer that encodes, and an encoder working flat out through the whole showing was what made the host's own player stutter while every guest was fine. Guests notice nothing: the encoder is always minutes ahead of them. The console shows "10 min ahead, resting" while it waits. A video the room isn't showing is prepared without pauses
+- An interrupted preparation (Ctrl+C, restart, another file's turn) now continues where it stopped instead of starting the film over
+
+## 0.2.3 (2026-10-19)
+
 - An interrupted preparation continues where it stopped. Until now, stopping FairPlay (or the encode) part way through a film threw the finished part away, and the next start encoded the whole film again from the beginning while you watched the first minute. The whole 4-second pieces are now kept with a small record of what made them, and the next Prepare of the same file picks up at that point; playback is allowed at once when enough was already prepared. The pieces are only reused by the very same plan (same quality versions, audio tracks, encoder and ladder); anything else, or a real encoder error, still starts over
 - The host's cache list names an interrupted encode after its film instead of "Unfinished encode", and the cache limit never removes the room's own film while it waits to be continued
 

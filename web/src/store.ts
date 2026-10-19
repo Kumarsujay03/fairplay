@@ -18,6 +18,7 @@ export interface MediaStatus {
   state: 'idle' | 'probing' | 'encoding' | 'ready' | 'error'
   playable: boolean
   encoded: number
+  idle?: boolean
   duration: number
   speed: number
   error?: string
