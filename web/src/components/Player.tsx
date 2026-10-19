@@ -38,8 +38,6 @@ export function Player() {
   const [mySub, setMySub] = useState<string | null>(null)
   const room = S.prefs.value
   const quality = myQ ?? room.quality
-  const qualityRef = useRef(quality)
-  qualityRef.current = quality
   const audio = myAudio ?? room.audio
   const sub = mySub ?? room.sub
   const [menu, setMenu] = useState(false)
@@ -79,14 +77,13 @@ export function Player() {
     e.onMutedStart = () => setSoundOff(true)
     // Stuck while the room plays: restart loading at the room position, and
     // rebuild the player if that doesn't help.
+    // Stuck while the room plays: restart loading at the room position, and
+    // rebuild the player if that doesn't help. Never a quality change: the
+    // viewer's quality is theirs (or the host's choice), and switching it
+    // mid-stream was itself a cause of black screens and seconds of delay.
     e.onStall = (n) => {
       const hls = hlsRef.current
-      if (hls && bufferedAhead(v) > 2) {
-        // The video is downloaded but the picture doesn't move: this computer
-        // can't decode it fast enough.
-        lighten('stalled with video buffered')
-        return
-      }
+      console.warn('FairPlay: no progress while the room plays, restarting the stream at the room position (' + n + ')')
       if (hls && n <= 2) {
         hls.stopLoad()
         if (n === 2) hls.recoverMediaError()
@@ -217,92 +214,6 @@ export function Player() {
     })
   }
 
-  // ---- picture lag ----
-  // The clock (driven by the sound) can be exactly on time while the picture
-  // on screen is seconds behind it, when this computer can't decode the
-  // video fast enough. Watch the frame actually shown and, when the picture
-  // stays behind, switch to a lighter quality and restart the decoder.
-  //
-  // Only decoding trouble counts. Frames that are decoded but never shown
-  // (a hidden tab, a window behind another, a screen that isn't repainting)
-  // are the browser saving work, not a slow computer, and the first seconds
-  // after a start or a seek are always slow. Acting on those made the
-  // picture go black at the start while qualities switched back and forth.
-  useEffect(() => {
-    const v = videoRef.current as HTMLVideoElement & {
-      requestVideoFrameCallback?: (cb: (now: number, meta: { mediaTime: number }) => void) => number
-      cancelVideoFrameCallback?: (id: number) => void
-    }
-    if (!v.requestVideoFrameCallback) return
-    let id = 0
-    let behindSince = 0
-    let lastFrame = performance.now()
-    let settledAt = performance.now() + 10_000 // no judgement before this
-    let lastDecoded = -1
-    let visible = true
-    const settle = () => (settledAt = performance.now() + 10_000)
-    for (const ev of ['loadstart', 'seeking', 'play', 'playing', 'ratechange']) v.addEventListener(ev, settle)
-    const io = 'IntersectionObserver' in window ? new IntersectionObserver((es) => (visible = es.some((e) => e.isIntersecting))) : null
-    io?.observe(v)
-    const onFrame = (_now: number, meta: { mediaTime: number }) => {
-      lastFrame = performance.now()
-      const lag = v.currentTime - meta.mediaTime
-      if (!v.paused && !v.seeking && lag > 1.0 && lastFrame > settledAt) {
-        if (!behindSince) behindSince = lastFrame
-        else if (lastFrame - behindSince > 4000) {
-          behindSince = 0
-          settle()
-          lighten('picture ' + lag.toFixed(1) + ' s behind the sound')
-        }
-      } else {
-        behindSince = 0
-      }
-      id = v.requestVideoFrameCallback!(onFrame)
-    }
-    id = v.requestVideoFrameCallback(onFrame)
-    // No frame shown for a while although the clock runs and the decoder is
-    // not producing any either: same cure. A decoder that is producing frames
-    // nobody shows is left alone.
-    const timer = setInterval(() => {
-      const now = performance.now()
-      const decoded = v.getVideoPlaybackQuality?.().totalVideoFrames ?? -1
-      const decoding = decoded !== lastDecoded
-      lastDecoded = decoded
-      if (!visible || document.hidden || v.paused || v.seeking || v.readyState < 3 || now < settledAt) return
-      if (now - lastFrame > 6000 && !decoding) {
-        lastFrame = now
-        settle()
-        lighten('no new frame for 6 s')
-      }
-    }, 1000)
-    return () => {
-      v.cancelVideoFrameCallback?.(id)
-      clearInterval(timer)
-      io?.disconnect()
-      for (const ev of ['loadstart', 'seeking', 'play', 'playing', 'ratechange']) v.removeEventListener(ev, settle)
-    }
-  }, [])
-
-  /** One quality lighter (for this viewer only), and a fresh decoder. */
-  function lighten(why: string) {
-    const v = videoRef.current!
-    const hls = hlsRef.current
-    console.warn('FairPlay: lighter quality,', why)
-    if (hls) {
-      const cur = hls.currentLevel >= 0 ? hls.currentLevel : hls.loadLevel
-      if (cur > 0) {
-        hls.autoLevelCapping = cur - 1
-        hls.currentLevel = cur - 1 // switch now, dropping the backlog
-        // Back to automatic choice (now capped) unless a quality was picked.
-        if (qualityRef.current === 'auto') setTimeout(() => (hls.loadLevel = -1), 500)
-        S.showToast('This computer is busy, using a lighter quality so the picture keeps up')
-        return
-      }
-    }
-    // Already the lightest: a seek restarts the decoder on the current frame.
-    v.currentTime = v.currentTime + 0.05
-  }
-
   // ---- media source ----
   useEffect(() => {
     const v = videoRef.current!
@@ -332,7 +243,6 @@ export function Player() {
           ignoreDevicePixelRatio: false,
           liveDurationInfinity: false,
           abrEwmaDefaultEstimate: 3_000_000,
-          capLevelOnFPSDrop: true, // a busy computer that drops frames gets a lighter quality
         })
         hlsRef.current = hls
         hls.on(HlsCtor.Events.MANIFEST_PARSED, () => {
@@ -1116,10 +1026,3 @@ function Seekbar(p: {
   )
 }
 
-function bufferedAhead(v: HTMLVideoElement): number {
-  const b = v.buffered
-  for (let i = 0; i < b.length; i++) {
-    if (b.start(i) <= v.currentTime + 0.3 && b.end(i) > v.currentTime) return b.end(i) - v.currentTime
-  }
-  return 0
-}

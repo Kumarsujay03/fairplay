@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.2 (2026-10-19)
+
+- Automatic quality switching during playback is gone for good. It arrived in 0.1.7–0.1.8 as a cure for a busy computer, and every version of it turned out to be a cause of the very thing it was meant to fix: a mid-stream quality switch restarts the decoder, which shows up as a black picture at the start and a few seconds' delay behind everyone else, with the message "This computer is busy, using a lighter quality". The last way it could still trigger was the stall check, which started counting from the room's clock, so pressing Play in the console and then opening the room fired it before this player had even begun. Now a player keeps the quality it has (Auto by bandwidth and screen size, or the one chosen by hand), the stall check only runs once the player is really playing and simply restarts loading at the room position, and the "busy" message no longer exists
+- Measured: host opens the room 8 s after pressing Play in the console: in sync from the first second at 1080p, no restart; host and guest within a few hundredths of a second of each other
+
 ## 0.2.1 (2026-10-19)
 
 - Fix: the picture could stay black for 10–15 seconds at the start with a "This computer is busy" message. The check that watches for a picture falling behind the sound was too eager: it also fired during the first seconds after a start or seek and when frames were decoded but not shown (a tab behind another window), and each time it switched quality and restarted the decoder. It now waits 10 seconds after any start or seek, needs the picture a full second behind for 4 seconds, ignores hidden or covered players, and only acts when the decoder itself has stopped
