@@ -91,6 +91,8 @@ type Manager struct {
 	MaxCache int64
 	// Current returns the room's video so pruning never removes it.
 	Current func() string
+	// testInputArgs go before -i in the encode; tests slow ffmpeg with them.
+	testInputArgs []string
 }
 
 type job struct {
@@ -325,15 +327,32 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 		fail(err)
 		return
 	}
+	versions := m.Versions()
+	rungs, audio := plan(info, versions)
+	var rn []string
+	for _, r := range rungs {
+		rn = append(rn, r.Name)
+	}
+	want := partial{Ladder: ladderVersion, Versions: versions, Encoder: m.enc.Name, Rungs: rn, Audio: len(audio)}
 	dir := filepath.Join(m.cache, m.key(it))
-	_ = os.RemoveAll(dir)
+	// An encode that was interrupted continues where it stopped, as long as
+	// what is on disk was made by this very plan; anything else starts over.
+	completed, perr := loadPartial(dir, want, info.Duration)
+	if completed > 0 {
+		log.Printf("media: %s: continuing from %.0f s", it.RelPath, completed)
+		touch(dir)
+	} else {
+		if perr != nil && !errors.Is(perr, os.ErrNotExist) {
+			log.Printf("media: %s: starting over: %v", it.RelPath, perr)
+		}
+		_ = os.RemoveAll(dir)
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		fail(err)
 		return
 	}
 
-	versions := m.Versions()
-	args, rungs, audio := buildArgs(it.abs, info, m.enc, m.tonemap, versions, m.Pace())
+	args, _, _ := buildArgs(it.abs, info, m.enc, m.tonemap, versions, m.Pace(), encodeOpts{resumeAt: completed, inputArgs: m.testInputArgs})
 	est := estimateBytes(info, rungs, len(audio))
 	var notes []string
 	if info.Video.HDR && !m.tonemap {
@@ -364,14 +383,16 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	for i, a := range audio {
 		at = append(at, AudioTrack{Index: i, Label: alabels[i], Lang: safeLang(a.Lang)})
 	}
-	var rn []string
-	for _, r := range rungs {
-		rn = append(rn, r.Name)
-	}
 	m.update(it.ID, func(s *Status) {
 		s.State, s.Duration, s.Rungs, s.Audio, s.Notes = StateEncoding, info.Duration, rn, at, notes
 		s.Width, s.Height, s.Bitrate = info.Video.Width, info.Video.Height, rungs[0].Bitrate+128
 		s.Versions, s.EstBytes = versions, est
+		// A continued encode is playable at once when enough was kept.
+		s.Encoded = completed
+		s.Playable = completed > 0 && completed >= minf(playableLead, info.Duration-0.5)
+		if completed > 0 {
+			s.Disk = dirSize(dir)
+		}
 	})
 
 	// Subtitles run alongside the video encode.
@@ -392,6 +413,7 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	master := filepath.Join(dir, "master.m3u8")
 	sc := bufio.NewScanner(stdout)
 	var lastEmit, lastDisk time.Time
+	encoded := completed // ffmpeg reports its own output time, which starts at the resume point
 	for sc.Scan() {
 		k, v, ok := strings.Cut(sc.Text(), "=")
 		if !ok {
@@ -403,7 +425,8 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 			if err != nil || us < 0 {
 				continue
 			}
-			sec := float64(us) / 1e6
+			sec := completed + float64(us)/1e6
+			encoded = sec
 			// Playable once a safe lead exists: nobody should ever reach the
 			// encoder's edge, where players would wait for the next segment
 			// at different moments and drift apart.
@@ -434,6 +457,24 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	}
 	err = cmd.Wait()
 	subs := <-subDone
+	if err != nil && ctx.Err() != nil {
+		// Stopped on purpose (shutdown, Cancel, another file's turn): keep
+		// the whole segments so the next run continues from there instead
+		// of encoding the film from the start again.
+		kept, perr := savePartial(dir, want, encoded)
+		if perr != nil {
+			_ = os.RemoveAll(dir)
+		}
+		var cp Status
+		m.update(it.ID, func(s *Status) { s.State, s.Playable, s.Encoded = StateIdle, false, kept; cp = *s })
+		if perr == nil {
+			// Named in the host's cache list, like a finished one.
+			if b, err := json.Marshal(cp); err == nil {
+				_ = os.WriteFile(filepath.Join(dir, "status.json"), b, 0o600)
+			}
+		}
+		return
+	}
 	if err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
@@ -453,6 +494,7 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	if b, err := json.Marshal(final); err == nil {
 		_ = os.WriteFile(filepath.Join(dir, "status.json"), b, 0o600)
 		_ = os.WriteFile(filepath.Join(dir, ".done"), nil, 0o600)
+		_ = os.Remove(filepath.Join(dir, partialFile))
 	}
 	if m.MaxCache > 0 {
 		cur := ""

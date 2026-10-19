@@ -61,6 +61,10 @@ func (m *Manager) inUseKeys(current string) map[string]bool {
 	defer m.mu.Unlock()
 	if st, ok := m.statuses[current]; ok && st.key != "" {
 		keep[st.key] = true
+	} else if it, ok := m.items[current]; ok {
+		// Not prepared since the start: its folder may still hold an
+		// interrupted encode to continue.
+		keep[m.key(it)] = true
 	}
 	if m.running != nil {
 		if st, ok := m.statuses[m.running.id]; ok {

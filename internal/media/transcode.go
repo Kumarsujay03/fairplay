@@ -264,21 +264,49 @@ func streamOpts(opts []string, i int) []string {
 	return out
 }
 
-// buildArgs returns the ffmpeg arguments for one transcode into dir: every
-// version in one pass, keyframes every segmentSeconds in all of them.
-func buildArgs(input string, info Info, enc Encoder, tonemap bool, versions, pace string) ([]string, []rung, []AudioInfo) {
+// encodeOpts are the extras of one transcode run.
+type encodeOpts struct {
+	// resumeAt is how many seconds are already prepared in the folder: the
+	// encode starts there and appends to the playlists (see loadPartial).
+	resumeAt float64
+	// inputArgs go before -i; tests use them to slow the encode down.
+	inputArgs []string
+}
+
+// plan is what a transcode of this file produces: the quality versions and
+// the audio tracks that are kept.
+func plan(info Info, versions string) ([]rung, []AudioInfo) {
 	rungs := planVersions(info.Video, versions)
-	portrait := info.Video.Height > info.Video.Width
 	audio := info.Audio
 	if len(audio) > maxAudioTracks {
 		audio = audio[:maxAudioTracks]
 	}
+	return rungs, audio
+}
+
+// buildArgs returns the ffmpeg arguments for one transcode into dir: every
+// version in one pass, keyframes every segmentSeconds in all of them.
+//
+// A resumed encode seeks the input to the completed seconds and lets the HLS
+// muxer append to the existing playlists. Segment numbering continues from
+// the playlists themselves, and the muxer marks the join with a
+// discontinuity tag, which is right: each fMP4 run's timestamps start at
+// zero again, and the player realigns on that tag. The init segments are
+// written again byte for byte (same encoder, same settings), so the earlier
+// segments stay valid.
+func buildArgs(input string, info Info, enc Encoder, tonemap bool, versions, pace string, o encodeOpts) ([]string, []rung, []AudioInfo) {
+	rungs, audio := plan(info, versions)
+	portrait := info.Video.Height > info.Video.Width
 
 	// The host usually watches on this same computer, so the browser must
 	// keep enough CPU to decode the picture smoothly.
 	threads := encodeThreads(NormalizePace(pace) == PaceCool)
 	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-threads", fmt.Sprint(threads)}
 	args = append(args, enc.globalArgs()...)
+	args = append(args, o.inputArgs...)
+	if o.resumeAt > 0 {
+		args = append(args, "-ss", fmt.Sprintf("%.3f", o.resumeAt))
+	}
 	args = append(args, "-i", input)
 
 	// Video chain: optional deinterlace and HDR tonemap, square pixels, split.
@@ -381,9 +409,13 @@ func buildArgs(input string, info Info, enc Encoder, tonemap bool, versions, pac
 		}
 	}
 
+	flags := "independent_segments+temp_file"
+	if o.resumeAt > 0 {
+		flags += "+append_list"
+	}
 	args = append(args,
 		"-f", "hls", "-hls_time", fmt.Sprint(segmentSeconds), "-hls_playlist_type", "event",
-		"-hls_segment_type", "fmp4", "-hls_flags", "independent_segments+temp_file",
+		"-hls_segment_type", "fmp4", "-hls_flags", flags,
 		"-hls_fmp4_init_filename", "init.mp4",
 		"-hls_segment_filename", "s_%v/seg_%05d.m4s",
 		"-master_pl_name", "master.m3u8",
