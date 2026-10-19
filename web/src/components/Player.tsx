@@ -15,6 +15,46 @@ interface Level {
   name: string
 }
 
+
+/** The largest quality the player's on-screen size can show (pixel density counted). */
+function topLevelForScreen(levels: { width: number; height: number }[], v: HTMLVideoElement): number {
+  const dpr = devicePixelRatio || 1
+  const w = (v.clientWidth || innerWidth) * dpr
+  const h = (v.clientHeight || innerHeight) * dpr
+  let best = -1
+  let smallest = -1
+  levels.forEach((l, i) => {
+    if (smallest < 0 || l.width < levels[smallest].width) smallest = i
+    // A little slack: a 1920-wide rung on a 1800-pixel player still looks better than 1280.
+    if (l.width <= w * 1.1 && l.height <= h * 1.1 && (best < 0 || l.width > levels[best].width)) best = i
+  })
+  return best >= 0 ? best : smallest
+}
+
+/** Every buffered range of the element, as "start-end" pairs; holes show up as gaps. */
+function rangesOf(v: HTMLVideoElement): string {
+  const b = v.buffered
+  const out: string[] = []
+  for (let i = 0; i < b.length && i < 8; i++) out.push(`${b.start(i).toFixed(1)}-${b.end(i).toFixed(1)}`)
+  return out.join(',')
+}
+
+/** hls.js's own warnings and errors go to the event log; its chatter does not. */
+function hlsLogger(log: (ev: string, d: Record<string, unknown>) => void) {
+  const noop = () => {}
+  const fwd = (ev: string) => (...a: unknown[]) => log(ev, { m: a.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))).join(' ').slice(0, 300) })
+  return { trace: noop, debug: noop, log: noop, info: noop, warn: fwd('hls.warn'), error: fwd('hls.err') }
+}
+
+/** Seconds of media buffered ahead of the playhead, 0 when the playhead is outside every range. */
+function bufferedAhead(v: HTMLVideoElement): number {
+  const b = v.buffered
+  for (let i = 0; i < b.length; i++) {
+    if (b.start(i) <= v.currentTime + 0.5 && b.end(i) >= v.currentTime) return Math.max(0, b.end(i) - v.currentTime)
+  }
+  return 0
+}
+
 export function Player() {
   const wrap = useRef<HTMLDivElement>(null)
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -47,6 +87,24 @@ export function Player() {
   const lastTouch = useRef(0)
   const [isFs, setIsFs] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
+  // Screen lock: taps, clicks and keys do nothing until unlocked, so a phone
+  // in a hand (or a cat on a keyboard) can't pause or skip for everyone.
+  const [locked, setLocked] = useState(false)
+  const [lockHint, setLockHint] = useState(false)
+  const lockHintTimer = useRef(0)
+  const flashLock = () => {
+    setLockHint(true)
+    clearTimeout(lockHintTimer.current)
+    lockHintTimer.current = window.setTimeout(() => setLockHint(false), 2500)
+  }
+  const lock = (on: boolean) => {
+    logEv('user.lock', { on })
+    setLocked(on)
+    setShowUi(!on)
+    if (on) flashLock()
+    else setLockHint(false)
+  }
+  const recoverAt = useRef(-1e9) // when hls.js last recovered from a media error
   const [inPip, setInPip] = useState(false)
   const pipSupported =
     (typeof document !== 'undefined' && !!document.pictureInPictureEnabled) ||
@@ -72,15 +130,46 @@ export function Player() {
     e.onReport = setReport
     e.onBlocked = setBlocked
     e.onMutedStart = () => setSoundOff(true)
+    e.onEvent = (ev, d) => logEv('sync.' + ev, d)
     engine.current = e
     e.start()
 
     const onPause = () => {
       setPaused(true)
+      // A decoder that fails pauses the element on its own, and so does hls.js
+      // while it rebuilds the media source afterwards. Neither is the viewer's
+      // doing, so neither may pause the room (or drop a guest into solo).
+      const sick = !!v.error || performance.now() - recoverAt.current < 5000
+      logEv('video.pause', { sick })
+      if (sick) return
       // Pauses from outside our UI (media keys, PiP window) count as the user's.
       if (!e.isOwnAction() && !v.ended && e.mode === 'follow' && S.room.value?.playing) userPause()
     }
-    const onPlay = () => setPaused(false)
+    const onPlay = () => {
+      setPaused(false)
+      logEv('video.play')
+    }
+    // Decoder and buffer events: these are what a stall looks like from inside the browser.
+    const vlog = (name: string) => () => logEv('video.' + name)
+    const onWaiting = vlog('waiting')
+    const onStalled = vlog('stalled')
+    const onPlaying = vlog('playing')
+    const onSeeking = vlog('seeking')
+    const onSeeked = vlog('seeked')
+    const onEnded = vlog('ended')
+    const onRate = () => logEv('video.ratechange', { rate: v.playbackRate })
+    const onErr = () => logEv('video.error', { code: v.error?.code, message: v.error?.message })
+    const onVis = () => logEv('page.visibility', { state: document.visibilityState })
+    v.addEventListener('waiting', onWaiting)
+    v.addEventListener('stalled', onStalled)
+    v.addEventListener('playing', onPlaying)
+    v.addEventListener('seeking', onSeeking)
+    v.addEventListener('seeked', onSeeked)
+    v.addEventListener('ended', onEnded)
+    v.addEventListener('ratechange', onRate)
+    v.addEventListener('error', onErr)
+    document.addEventListener('visibilitychange', onVis)
+    logEv('open', { ua: navigator.userAgent, w: innerWidth, h: innerHeight, dpr: devicePixelRatio })
     const onTime = () => {
       setCur(v.currentTime)
       const b = v.buffered
@@ -123,6 +212,15 @@ export function Player() {
     return () => {
       clearInterval(statusTimer)
       e.destroy()
+      v.removeEventListener('waiting', onWaiting)
+      v.removeEventListener('stalled', onStalled)
+      v.removeEventListener('playing', onPlaying)
+      v.removeEventListener('seeking', onSeeking)
+      v.removeEventListener('seeked', onSeeked)
+      v.removeEventListener('ended', onEnded)
+      v.removeEventListener('ratechange', onRate)
+      v.removeEventListener('error', onErr)
+      document.removeEventListener('visibilitychange', onVis)
       v.removeEventListener('pause', onPause)
       v.removeEventListener('play', onPlay)
       v.removeEventListener('timeupdate', onTime)
@@ -141,6 +239,7 @@ export function Player() {
     const r = { target: e.target(), drift: v.currentTime - e.target() }
     const hls = hlsRef.current
     const lv = hls && hls.currentLevel >= 0 ? hls.levels[hls.currentLevel] : null
+    const pq = typeof v.getVideoPlaybackQuality === 'function' ? v.getVideoPlaybackQuality() : null
     socket.send({
       t: 'status',
       mode: e.mode,
@@ -150,8 +249,35 @@ export function Player() {
       jit: socket.clock.jitter,
       drift: Math.round(r.drift * 1000),
       q: lv ? qualityName(lv.width, lv.height) : '',
+      // For the event log: how much is buffered ahead, decoder health, bandwidth.
+      ahead: Math.round(bufferedAhead(v) * 100) / 100,
+      rs: v.readyState,
+      rate: v.playbackRate,
+      paused: v.paused,
+      dropped: pq?.droppedVideoFrames ?? 0,
+      frames: pq?.totalVideoFrames ?? 0,
+      bw: hls ? Math.round(hls.bandwidthEstimate / 1000) : 0,
+      vis: document.visibilityState,
+      ranges: rangesOf(v),
     })
   }
+
+  /** What the player sees, attached to every event it logs. */
+  const snap = (): Record<string, unknown> => {
+    const v = videoRef.current
+    const e = engine.current
+    if (!v) return {}
+    return {
+      pos: Math.round(v.currentTime * 100) / 100,
+      room: e ? Math.round(e.target() * 100) / 100 : 0,
+      rs: v.readyState,
+      ahead: Math.round(bufferedAhead(v) * 100) / 100,
+      paused: v.paused,
+      own: e?.isOwnAction() ?? false,
+      mode: e?.mode,
+    }
+  }
+  const logEv = (ev: string, d: Record<string, unknown> = {}) => socket.log(ev, { ...snap(), ...d })
 
   // ---- media source ----
   useEffect(() => {
@@ -173,6 +299,7 @@ export function Player() {
       import('hls.js').then(({ default: HlsCtor }) => {
         if (cancelled) return
         hls = new HlsCtor({
+          debug: hlsLogger(logEv),
           enableWorker: true,
           startPosition: engine.current?.target() ?? 0,
           maxBufferLength: 30,
@@ -184,7 +311,19 @@ export function Player() {
           abrEwmaDefaultEstimate: 3_000_000,
         })
         hlsRef.current = hls
-        hls.on(HlsCtor.Events.MANIFEST_PARSED, () => {
+        logEv('hls.load', { src, startPosition: engine.current?.target() ?? 0 })
+        hls.on(HlsCtor.Events.MANIFEST_PARSED, (_e, d) => {
+          // The host streams from its own computer, so bandwidth is not a
+          // question: start straight at the quality the screen can show.
+          // Ramping 480p → 720p → 1080p in the first seconds made the
+          // browser's decoder reconfigure three times, and one of those
+          // broke it (a garbled picture, then a decode error).
+          let start = -1
+          if (S.you.value?.role === 'host') {
+            start = topLevelForScreen(hls!.levels, v)
+            hls!.startLevel = start
+          }
+          logEv('hls.manifest', { levels: d.levels.map((l) => `${l.width}x${l.height}@${Math.round(l.bitrate / 1000)}k`), start })
           setLevels(
             hls!.levels
               .map((l, i) => ({ index: i, name: qualityName(l.width, l.height), w: l.width }))
@@ -197,15 +336,34 @@ export function Player() {
         hls.on(HlsCtor.Events.LEVEL_SWITCHED, (_e, d) => {
           const l = hls!.levels[d.level]
           if (l) setAutoLevel(qualityName(l.width, l.height))
+          logEv('hls.level', { level: d.level, q: l ? qualityName(l.width, l.height) : '', auto: hls!.autoLevelEnabled, bw: Math.round(hls!.bandwidthEstimate / 1000) })
+        })
+        hls.on(HlsCtor.Events.LEVEL_LOADED, (_e, d) => {
+          logEv('hls.levelloaded', { level: d.level, live: d.details.live, n: d.details.fragments.length, dur: Math.round(d.details.totalduration) })
+        })
+        hls.on(HlsCtor.Events.BUFFER_EOS, (_e, d) => logEv('hls.eos', { type: d.type }))
+        hls.on(HlsCtor.Events.FRAG_BUFFERED, (_e, d) => {
+          const f = d.frag
+          logEv('hls.frag', { sn: f.sn, type: f.type, level: f.level, start: Math.round(f.start * 100) / 100, end: Math.round((f.start + f.duration) * 100) / 100, ms: Math.round(d.stats.buffering.end - d.stats.loading.start) })
+        })
+        hls.on(HlsCtor.Events.FRAG_LOADED, (_e, d) => {
+          // Only slow pieces are worth a line: a 4 s piece that takes over 1.5 s to arrive.
+          const st = d.frag.stats
+          const ms = st.loading.end - st.loading.start
+          if (ms > 1500) logEv('hls.slowfrag', { sn: d.frag.sn, level: d.frag.level, type: d.frag.type, ms: Math.round(ms), kb: Math.round(st.total / 1024) })
         })
         let recover = 0
         hls.on(HlsCtor.Events.ERROR, (_e, d) => {
+          logEv('hls.error', { type: d.type, details: d.details, fatal: d.fatal, reason: d.reason, code: d.response?.code, url: d.url, frag: d.frag?.sn })
           if (!d.fatal) return
           if (d.type === HlsCtor.ErrorTypes.NETWORK_ERROR) {
             setTimeout(() => hls?.startLoad(), 1000)
           } else if (d.type === HlsCtor.ErrorTypes.MEDIA_ERROR && recover++ < 3) {
+            recoverAt.current = performance.now()
+            engine.current?.markOwn()
             hls!.recoverMediaError()
           } else {
+            logEv('hls.reload', { recover })
             S.showToast('Playback error, reloading the stream', 'error')
             setTimeout(() => setReloadKey((k) => k + 1), 1500)
           }
@@ -224,17 +382,27 @@ export function Player() {
   }, [m?.id, playable, reloadKey])
 
   // Quality: the host's room choice or your own; "auto" lets bandwidth decide.
+  // Not for the host: it streams from its own computer, so there is no
+  // bandwidth to measure, and hls.js's warm-up (a dip to 480p, then 720p, then
+  // 1080p) only made the browser's decoder reconfigure three times. The host's
+  // "auto" is simply the best rung its screen can show, fixed.
   useEffect(() => {
     const hls = hlsRef.current
     if (!hls || !levels.length) return
     if (quality === 'auto') {
-      if (!hls.autoLevelEnabled) hls.currentLevel = -1
+      if (me?.role === 'host') {
+        const top = topLevelForScreen(hls.levels, videoRef.current!)
+        if (hls.currentLevel !== top) {
+          logEv('hls.pin', { level: top })
+          hls.currentLevel = top
+        }
+      } else if (!hls.autoLevelEnabled) hls.currentLevel = -1
       return
     }
     const l = levels.find((x) => x.name === quality)
     if (l && hls.currentLevel !== l.index) hls.currentLevel = l.index
     else if (!l && !hls.autoLevelEnabled) hls.currentLevel = -1
-  }, [quality, levels])
+  }, [quality, levels, me?.role])
 
   // Audio track: the host's room choice or your own (-1 keeps the file's default).
   useEffect(() => {
@@ -282,6 +450,10 @@ export function Player() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement).closest('input, textarea, select')) return
+      if (locked) {
+        flashLock()
+        return
+      }
       const v = videoRef.current!
       switch (e.key) {
         case ' ':
@@ -328,6 +500,7 @@ export function Player() {
 
   // ---- actions ----
   const setMode = (next: 'follow' | 'solo') => {
+    if (S.mode.value !== next) logEv('user.mode', { mode: next })
     S.mode.value = next
     if (next === 'follow') engine.current?.follow()
     else engine.current?.solo()
@@ -336,6 +509,7 @@ export function Player() {
 
   function userPause() {
     const v = videoRef.current!
+    logEv('user.pause', { control: canControl })
     if (canControl) {
       socket.send({ t: 'cmd', op: 'pause' })
       return
@@ -346,6 +520,7 @@ export function Player() {
 
   function togglePlay() {
     const v = videoRef.current!
+    logEv('user.toggleplay', { control: canControl, blocked, roomPlaying: !!S.room.value?.playing })
     if (blocked) return unblock()
     if (canControl && S.mode.value === 'follow') {
       socket.send({ t: 'cmd', op: S.room.value?.playing ? 'pause' : 'play' })
@@ -372,6 +547,7 @@ export function Player() {
     const v = videoRef.current!
     const limit = seekLimit()
     t = Math.max(0, Math.min(t, limit))
+    logEv('user.seek', { to: Math.round(t * 100) / 100, limit: Math.round(limit * 100) / 100, control: canControl })
     if (canControl && S.mode.value === 'follow') {
       socket.send({ t: 'cmd', op: 'seek', pos: t })
       return
@@ -391,6 +567,7 @@ export function Player() {
   }
 
   function backToLive() {
+    logEv('user.live')
     setMode('follow')
     S.showToast('Back with the room')
   }
@@ -403,6 +580,7 @@ export function Player() {
 
   function unblock() {
     const v = videoRef.current!
+    logEv('user.unblock')
     v.play()
       .then(() => engine.current?.unblock())
       .catch(() => {
@@ -412,6 +590,7 @@ export function Player() {
   }
 
   function toggleFs() {
+    logEv('user.fullscreen', { on: !document.fullscreenElement })
     const el = wrap.current as any
     const v = videoRef.current as any
     if (document.fullscreenElement) {
@@ -458,6 +637,7 @@ export function Player() {
   // The host's picks set the room default; everyone else's are personal.
   const isHost = me?.role === 'host'
   const pick = (field: 'quality' | 'audio' | 'sub', value: string | number) => {
+    logEv('user.pick', { field, value, host: isHost })
     if (isHost) {
       socket.send({ t: 'host', op: 'prefs', prefs: { ...S.prefs.value, [field]: value } })
       if (field === 'quality') setMyQ(null)
@@ -500,13 +680,15 @@ export function Player() {
   return (
     <div
       ref={wrap}
-      class={`player ${showUi || paused ? 'ui-on' : 'ui-off'} ${compact ? 'compact' : ''} ${chatOpen ? 'chat-on' : ''}`}
+      class={`player ${(showUi || paused) && !locked ? 'ui-on' : 'ui-off'} ${locked ? 'locked' : ''} ${compact ? 'compact' : ''} ${chatOpen ? 'chat-on' : ''}`}
       onMouseMove={() => {
+        if (locked) return
         // Phones send a fake mouse move with every tap; the tap itself decides.
         if (performance.now() - lastTouch.current > 800) setShowUi(true)
       }}
       onTouchStart={(e) => {
         lastTouch.current = performance.now()
+        if (locked) return
         // A tap on the picture toggles the controls (the video's click
         // handler); a touch anywhere else just keeps them on screen.
         if (e.target !== videoRef.current) setShowUi(true)
@@ -518,9 +700,16 @@ export function Player() {
           playsInline
           preload="auto"
           disablePictureInPicture={false}
-          // On touchscreens a tap shows or hides the controls; with a mouse it plays/pauses.
-          onClick={() => (soundOff ? unmute() : compact || touch || performance.now() - lastTouch.current < 800 ? setShowUi((on) => !on) : togglePlay())}
-          onDblClick={toggleFs}
+          // On touchscreens a tap shows or hides the controls; with a mouse it
+          // plays/pauses, except for the host, whose click would pause the
+          // whole room: the host uses the button or the space bar.
+          onClick={() => {
+            if (locked) return flashLock()
+            if (soundOff) return unmute()
+            if (compact || touch || canControl || performance.now() - lastTouch.current < 800) setShowUi((on) => !on)
+            else togglePlay()
+          }}
+          onDblClick={() => !locked && toggleFs()}
         >
           {playable &&
             subs.map((s) => <track key={s.id} id={s.id} kind="subtitles" src={`/hls/${m!.id}/${s.url}`} srclang={s.lang} label={s.label} />)}
@@ -569,6 +758,12 @@ export function Player() {
           mode={mode}
           onPlay={togglePlay}
         />
+
+        {locked && (
+          <button class={`lock-pill ${lockHint ? 'show' : ''}`} onClick={() => lock(false)} aria-label="Unlock screen">
+            <Icon name="lock" size={20} /> Screen locked · tap to unlock
+          </button>
+        )}
 
         {soundOff && (
           <button class="unmute-pill" onClick={unmute}>
@@ -732,6 +927,9 @@ export function Player() {
                 <Icon name="pip" />
               </button>
             )}
+            <button class="icon-btn" onClick={() => lock(true)} title="Lock the screen: taps and keys do nothing until unlocked" aria-label="Lock screen">
+              <Icon name="lock" />
+            </button>
             <button class="icon-btn" onClick={toggleFs} title="Fullscreen (f)">
               <Icon name={isFs ? 'x' : 'fullscreen'} />
             </button>

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- An event log runs for the whole showing, always on, at `~/.config/fairplay/logs/fairplay-<date>-<time>.jsonl` (one JSON object per line; `fairplay logs` lists the files and some `jq` filters). It records every room state change (play, pause, seek, who did it, the reason), every viewer's status once a second (position against the room clock, drift, ping, buffering, seconds buffered ahead, dropped frames, quality, bandwidth estimate, tab visibility), every command and host-console action, chat and reactions, joins and leaves, the exact ffmpeg command and the encoder's progress, every HLS request with its size and how long it took, and what each player saw in its browser: stalls, seeks, quality switches, hls.js errors, the sync engine's nudges and hard seeks, and the viewer's own clicks. When someone buffers or falls behind, the log says what every part of FairPlay was doing at that second. The 30 newest files are kept
+- Fix: a decoder failure on the host's computer paused the whole room. When the browser's video decoder fails (a garbled green and magenta picture, then a decode error) it pauses the video element itself, and so does hls.js while it rebuilds the stream afterwards. The player took that pause for the host pressing Pause and stopped everyone. Those pauses are now recognised and ignored; the host's player recovers on its own and the room plays on. The same mistake could drop a guest into solo mode; it no longer does
+- Fix: the Wi-Fi link could point at a VPN or virtual adapter (a 10.x.x.x address nobody on the Wi-Fi can reach) instead of the Wi-Fi card. Tunnels, point-to-point links and adapters named like Docker, VirtualBox, WireGuard, Tailscale or Windscribe are skipped, and a home 192.168.x.x address is listed first
+- Screen lock: a lock button in the player controls. While locked, taps, clicks, double taps and keyboard shortcuts do nothing, the controls and chat stay hidden, and a tap shows a centred "Screen locked · tap to unlock" pill for a moment. For the host and every viewer
+- The host's click on the picture no longer pauses the room: it shows or hides the controls, as a tap does on a phone. The host pauses with the button or the space bar
+- Chat bubbles fade 10 seconds after the last message. On phones they stayed on screen forever, because the first tap counted as the mouse "entering" the chat and the composer kept its focus after a send
+- The host's player plays one quality, the best rung its screen can show, with no automatic switching at all. hls.js's warm-up on every start was a dip to 480p, then 720p, then 1080p in the first twelve seconds, whatever the bandwidth. The host streams from its own computer, so there is nothing to measure, and each switch made the browser's decoder reconfigure; one of those switches is what broke it above. Picking a quality by hand still works as before
+
 ## 0.3.1 (2026-10-19)
 
 The 0.1.4 encoding and streaming code from 0.3.0, with three changes to how ffmpeg runs, so the host can watch on the computer that prepares the film:

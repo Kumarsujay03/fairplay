@@ -22,6 +22,7 @@ import (
 
 	"github.com/Kumarsujay03/fairplay/internal/auth"
 	"github.com/Kumarsujay03/fairplay/internal/emoji"
+	"github.com/Kumarsujay03/fairplay/internal/eventlog"
 	"github.com/Kumarsujay03/fairplay/internal/media"
 	"github.com/Kumarsujay03/fairplay/internal/room"
 )
@@ -223,6 +224,8 @@ func (h *Hub) drainSignals() {
 func (h *Hub) onMediaLocked(st media.Status) {
 	h.statuses[st.ID] = st
 	h.toHostsLocked(msg{"t": "libst", "status": st})
+	eventlog.Log("media", eventlog.Fields{"id": st.ID, "name": st.Name, "state": st.State, "playable": st.Playable,
+		"encoded": st.Encoded, "duration": st.Duration, "speed": st.Speed, "encoder": st.Encoder, "error": st.Error})
 	cur := h.room.State()
 	if st.ID != cur.MediaID {
 		return
@@ -270,6 +273,7 @@ func (h *Hub) tickLocked() {
 	switch {
 	case st.Playing && now > st.Anchor+1500 && stalled != "":
 		if s, ok := h.room.Pause(now, room.ReasonBuffering, stalled); ok {
+			eventlog.Log("wait.pause", eventlog.Fields{"by": stalled, "pos": s.Pos})
 			h.broadcastStateLocked(s)
 		}
 		h.bufClear = time.Time{}
@@ -279,6 +283,7 @@ func (h *Hub) tickLocked() {
 		} else if time.Since(h.bufClear) > 500*time.Millisecond {
 			h.bufClear = time.Time{}
 			if s, ok := h.room.ResumeAfterBuffering(now, lead); ok {
+				eventlog.Log("wait.resume", eventlog.Fields{"pos": s.Pos, "lead": lead})
 				h.broadcastStateLocked(s)
 			}
 		}
@@ -324,8 +329,9 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	c := &client{
 		h: h, conn: conn, send: make(chan []byte, 256), ctx: ctx, cancel: cancel,
 		sid: sess.ID, invite: sess.InviteID, role: sess.Role, name: sess.Name, device: sess.Device, mode: "follow",
-		chatTB: newBucket(5, 1), reactTB: newBucket(6, 3),
+		chatTB: newBucket(5, 1), reactTB: newBucket(6, 3), logTB: newBucket(40, 8),
 	}
+	eventlog.Log("ws.join", eventlog.Fields{"sid": c.sid, "name": c.name, "role": string(c.role), "device": c.device, "ip": r.RemoteAddr})
 	h.mu.Lock()
 	h.clients[c] = struct{}{}
 	c.writeLocked(h.helloLocked(c))
@@ -342,6 +348,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	go c.writer()
 	c.reader()
 
+	eventlog.Log("ws.leave", eventlog.Fields{"sid": c.sid, "name": c.name, "role": string(c.role), "pos": c.pos, "mode": c.mode})
 	h.mu.Lock()
 	delete(h.clients, c)
 	h.peersDirty = true
@@ -355,6 +362,7 @@ func (h *Hub) Kick(sids []string, reason string) {
 	if len(sids) == 0 {
 		return
 	}
+	eventlog.Log("kick", eventlog.Fields{"sids": sids, "reason": reason})
 	set := map[string]bool{}
 	for _, s := range sids {
 		set[s] = true
@@ -382,6 +390,7 @@ func (h *Hub) ClearQueue() {
 }
 
 func (h *Hub) SetTunnel(t TunnelInfo) {
+	eventlog.Log("tunnel", eventlog.Fields{"provider": t.Provider, "state": t.State, "url": t.URL, "error": t.Error})
 	h.mu.Lock()
 	h.tunnel = t
 	h.toHostsLocked(msg{"t": "tunnel", "tunnel": t})
@@ -446,6 +455,21 @@ type inMsg struct {
 	To       int         `json:"to"`
 	Settings *Settings   `json:"settings"`
 	Prefs    *TrackPrefs `json:"prefs"`
+
+	// Extra status fields the player reports for the event log.
+	Ahead   float64 `json:"ahead"`   // seconds buffered ahead of the playhead
+	RS      int     `json:"rs"`      // HTMLMediaElement.readyState
+	Rate    float64 `json:"rate"`    // playbackRate
+	Dropped int     `json:"dropped"` // dropped video frames so far
+	Frames  int     `json:"frames"`  // total video frames so far
+	BW      int     `json:"bw"`      // hls.js bandwidth estimate, kbps
+	Vis     string  `json:"vis"`     // document.visibilityState
+	Paused  bool    `json:"paused"`
+	Ranges  string  `json:"ranges"` // buffered ranges, "start-end,start-end"
+
+	// Player-side event ("log" messages).
+	Ev string         `json:"ev"`
+	D  map[string]any `json:"d"`
 }
 
 func (h *Hub) handle(c *client, m inMsg) {
@@ -459,6 +483,8 @@ func (h *Hub) handle(c *client, m inMsg) {
 		h.mu.Lock()
 		h.onStatusLocked(c, m)
 		h.mu.Unlock()
+	case "log":
+		h.onClientLog(c, m)
 	case "chat":
 		h.onChat(c, m.Text)
 	case "react":
@@ -503,6 +529,35 @@ func (h *Hub) onStatusLocked(c *client, m inMsg) {
 	if changed {
 		h.peersDirty = true
 	}
+	st := h.room.State()
+	eventlog.Log("status", eventlog.Fields{
+		"sid": c.sid, "name": c.name, "role": string(c.role), "mode": mode, "buf": m.Buf, "paused": m.Paused,
+		"pos": m.Pos, "room": st.PositionAt(h.now()), "playing": st.Playing, "reason": st.Reason,
+		"drift": m.Drift, "rtt": m.RTT, "jit": m.Jit, "q": c.q, "ahead": m.Ahead, "rs": m.RS, "rate": m.Rate,
+		"dropped": m.Dropped, "frames": m.Frames, "bw": m.BW, "vis": m.Vis, "ranges": cut(m.Ranges, 200),
+	})
+}
+
+// onClientLog records an event a player saw in its browser: a stall, a seek,
+// a quality switch, an hls.js error. Rate limited per connection.
+func (h *Hub) onClientLog(c *client, m inMsg) {
+	if m.Ev == "" || len(m.Ev) > 40 || !c.logTB.take() {
+		return
+	}
+	f := eventlog.Fields{"sid": c.sid, "name": c.name, "role": string(c.role)}
+	n := 0
+	for k, v := range m.D {
+		if n++; n > 24 {
+			break
+		}
+		if _, taken := f[k]; !taken && len(k) <= 32 {
+			if s, ok := v.(string); ok {
+				v = cut(s, 300)
+			}
+			f[k] = v
+		}
+	}
+	eventlog.Log("player."+m.Ev, f)
 }
 
 func (h *Hub) canControl(c *client) bool {
@@ -541,12 +596,21 @@ func (h *Hub) onCommand(c *client, m inMsg) {
 			s, ok = h.room.Play(now, lead, c.name)
 		}
 	}
+	eventlog.Log("cmd", eventlog.Fields{"sid": c.sid, "name": c.name, "role": string(c.role), "op": m.Op, "pos": m.Pos, "sec": m.Sec, "ok": ok, "lead": lead})
 	if ok {
 		h.broadcastStateLocked(s)
 	}
 }
 
 func (h *Hub) onHost(c *client, m inMsg) {
+	f := eventlog.Fields{"name": c.name, "op": m.Op, "media": m.Media, "sid": m.SID, "on": m.On, "index": m.Index, "to": m.To}
+	if m.Settings != nil {
+		f["settings"] = *m.Settings
+	}
+	if m.Prefs != nil {
+		f["prefs"] = *m.Prefs
+	}
+	eventlog.Log("host", f)
 	switch m.Op {
 	case "admit":
 		kicked, err := h.auth.Admit(m.SID, h.Settings().MaxGuests)
@@ -717,6 +781,7 @@ func (h *Hub) loadLocked(id, by string, autoplay bool) {
 		dur = st.Duration
 	}
 	s := h.room.Load(h.now(), id, dur, by)
+	eventlog.Log("room.load", eventlog.Fields{"id": id, "name": it.Name, "by": by, "autoplay": autoplay, "duration": dur})
 	h.autoplay = autoplay
 	h.prefs = defaultPrefs() // a new film starts on its own default tracks
 	h.broadcastLocked(msg{"t": "prefs", "prefs": h.prefs})
@@ -761,6 +826,7 @@ func (h *Hub) systemChatLocked(text string) {
 }
 
 func (h *Hub) appendChatLocked(m ChatMsg) {
+	eventlog.Log("chat", eventlog.Fields{"sid": m.SID, "name": m.Name, "text": m.Text, "sys": m.Sys})
 	h.chat = append(h.chat, m)
 	if len(h.chat) > chatHistory {
 		h.chat = h.chat[len(h.chat)-chatHistory:]
@@ -785,6 +851,7 @@ func (h *Hub) onReact(c *client, e string) {
 	if !h.settings.Reactions || !c.reactTB.take() {
 		return
 	}
+	eventlog.Log("react", eventlog.Fields{"sid": c.sid, "name": c.name, "e": e})
 	h.broadcastLocked(msg{"t": "react", "e": e, "sid": c.sid, "name": c.name})
 }
 
@@ -842,6 +909,8 @@ func (h *Hub) broadcastPeersLocked() {
 }
 
 func (h *Hub) broadcastStateLocked(s room.State) {
+	eventlog.Log("room.state", eventlog.Fields{"media": s.MediaID, "playing": s.Playing, "pos": s.Pos, "anchor": s.Anchor,
+		"rate": s.Rate, "reason": s.Reason, "by": s.By, "interUntil": s.InterUntil, "v": s.Version, "viewers": len(h.clients)})
 	h.broadcastLocked(msg{"t": "state", "state": s, "now": h.now()})
 }
 
@@ -929,6 +998,7 @@ type client struct {
 	q         string
 	chatTB    *bucket
 	reactTB   *bucket
+	logTB     *bucket
 	dead      bool
 }
 
@@ -1004,6 +1074,7 @@ func (c *client) sendLocked(b []byte) {
 	default:
 		// A client that cannot keep up would block everyone; drop it and let
 		// it reconnect.
+		eventlog.Log("ws.slow", eventlog.Fields{"sid": c.sid, "name": c.name})
 		c.close("too slow")
 	}
 }

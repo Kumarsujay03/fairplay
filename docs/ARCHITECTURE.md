@@ -64,6 +64,7 @@ FairPlay is a single binary you run on your own computer. It serves a small web 
 | `internal/auth` | Host key, invites, device binding, the lobby and sessions |
 | `internal/media` | Library scan, ffprobe, the HLS ladder transcode, subtitles, cache and an allowlisted file server |
 | `internal/tunnel` | The cloudflared and ngrok supervisor |
+| `internal/eventlog` | The always-on JSON-lines event log of a showing: room state, viewer status, commands, encoder, HLS requests and player-side events (`fairplay logs`) |
 | `web/` | The Preact app: player, sync engine, chat, host console and join page |
 
 ### Encoding pipeline
