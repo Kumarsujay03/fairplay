@@ -534,6 +534,12 @@ func (h *Hub) onCommand(c *client, m inMsg) {
 	switch m.Op {
 	case "play":
 		s, ok = h.room.Play(now, lead, c.name)
+		if !ok && h.room.State().Reason == room.ReasonLoading {
+			// Pressed while the video is still being prepared: start the
+			// moment it is playable instead of ignoring the press.
+			h.autoplay = true
+			h.systemChatLocked(c.name + " pressed play: it starts as soon as the video is ready")
+		}
 	case "pause":
 		s, ok = h.room.Pause(now, room.ReasonHost, c.name)
 	case "seek":

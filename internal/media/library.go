@@ -170,7 +170,7 @@ func Browse(dir string) (Listing, error) {
 
 // ladderVersion changes whenever the encoding ladder changes, so files
 // prepared by an older FairPlay are prepared again.
-const ladderVersion = "ladder-v4"
+const ladderVersion = "ladder-v5"
 
 func cacheKey(it Item, versions string) string {
 	h := sha1.New()

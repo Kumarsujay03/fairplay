@@ -32,8 +32,8 @@ function saveToken(id: string, token: string) {
 }
 
 const versionHint: Record<string, string> = {
-  original: 'Smallest on disk, but every viewer needs a connection fast enough for the original.',
-  balanced: 'Best experience: the original for good connections and a 720p copy for weak ones.',
+  original: 'Smallest on disk, but every viewer needs a connection fast enough for the top quality.',
+  balanced: 'Best experience: top quality for good connections and a 720p version for weak ones.',
   full: 'Adds a 480p copy for very slow connections, using a little more disk.',
 }
 
@@ -509,7 +509,6 @@ function MediaSummary({ m }: { m: S.MediaStatus }) {
           </div>
           <div class="row wrap">
             {m.state === 'ready' && <span class="tag ok"><Icon name="check" size={12} /> Ready</span>}
-            {m.original && <span class="tag ok" title="The original picture is streamed as-is: best quality, no re-encoding">Original quality</span>}
             {m.state === 'encoding' && <span class="tag warn">Encoding {pct.toFixed(0)}% · {m.speed?.toFixed(1)}×</span>}
             {m.state === 'probing' && <span class="tag neutral">Reading file…</span>}
             {m.state === 'error' && <span class="tag bad">Error</span>}
@@ -1067,24 +1066,24 @@ function RoomSettings() {
       <label class="col tight">
         <span class="label dim">Quality versions for new videos</span>
         <select class="input select" value={s.versions || 'balanced'} onChange={(e) => set({ versions: (e.target as HTMLSelectElement).value as S.HostSettings['versions'] })}>
-          <option value="original">Original only</option>
-          <option value="balanced">Original + 720p (recommended)</option>
-          <option value="full">Original + 720p + 480p</option>
+          <option value="original">Top quality only</option>
+          <option value="balanced">Top quality + 720p (recommended)</option>
+          <option value="full">Top quality + 720p + 480p</option>
         </select>
         <span class="caption muted">
-          {versionHint[s.versions || 'balanced']} The original picture is streamed untouched when the browser can play it (most H.264 files), so quality is the best possible and it takes no extra encoding.
+          {versionHint[s.versions || 'balanced']} The top quality is encoded at well above the file's own bitrate, so nothing is visibly lost, and every version is cut into the same 4-second pieces so quality switches and seeks are instant.
         </span>
       </label>
       <label class="col tight">
         <span class="label dim">Preparing speed</span>
         <select class="input select" value={s.pace || 'cool'} onChange={(e) => set({ pace: (e.target as HTMLSelectElement).value as S.HostSettings['pace'] })}>
-          <option value="cool">Cool · quiet, about one CPU core (recommended)</option>
+          <option value="cool">Cool · a quarter of the CPU (recommended)</option>
           <option value="fast">Fast · half the CPU, finishes sooner</option>
         </select>
         <span class="caption muted">
           {(s.pace || 'cool') === 'cool'
-            ? 'Prepares at twice playback speed, a few minutes ahead, so viewers never catch up and your computer stays quiet and cool. A 2-hour film is fully prepared after about an hour; skipping ahead is limited to what is prepared.'
-            : 'Uses half of the CPU threads flat out. The computer gets warmer and the fan louder, but a 2-hour film is ready in a few minutes.'}
+            ? 'With a GPU, preparing takes less than one CPU core either way and a 2-hour film is ready in about 15 minutes. Without one, cool keeps the computer quiet. Playback can start after 45 seconds are prepared; skipping ahead is limited to what is prepared.'
+            : 'Uses half of the CPU threads. On a CPU-only computer it gets warmer and the fan louder, but the film is ready sooner.'}
         </span>
       </label>
       <label class="row">

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 (2026-10-19)
+
+The way videos are prepared and streamed is rebuilt. Since 0.1.5 the original picture was copied instead of encoded, which kept the file's own keyframes: anywhere from one to ten seconds apart. That made the stream's pieces long and uneven, so each player waited for a different piece at the encoder's edge, seeks landed late, and two screens could drift up to twenty seconds apart while both clocks read "in sync". The pacing added in 0.1.8 made the edge even closer.
+
+- Every version is encoded again, on the GPU where there is one, with a keyframe every 4 seconds in all of them: identical 4-second pieces, instant quality switches and seeks, a steadily moving edge. The top version is encoded at 1.5× the file's own bitrate (at least the ladder's figure, at most 10 Mbps), so nothing is visibly lost
+- Playback can start once 45 seconds are prepared, and the host can skip ahead only to 15 seconds behind the edge, so nobody ever waits at it
+- No pacing: the encoder runs at full speed on the GPU (a 2-hour film in about 15 minutes, under one CPU core). The Cool/Fast setting now only sets how many CPU threads a CPU-only computer may use
+- Audio that must be re-encoded gets 160 kbps stereo AAC
+- Videos prepared by earlier versions are prepared again the first time they are played
+
 ## 0.1.9 (2026-10-19)
 
 - GPU encoding on Linux through VAAPI (Intel and AMD graphics): the smaller versions are scaled and encoded on the GPU, so preparing a film costs about half of one CPU core. FairPlay tries it first; if the driver is missing, the start-up banner says what to install

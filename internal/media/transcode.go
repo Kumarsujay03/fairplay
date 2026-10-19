@@ -3,50 +3,50 @@ package media
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 )
 
+// Every version is encoded, none is copied: a copied original keeps the
+// file's own keyframes (anything from one to ten seconds apart), so its
+// segments are long and uneven, every player waits for a different one at
+// the encoder's edge, and seeks land seconds late. Encoding all versions
+// with a keyframe every 4 seconds gives identical 4-second segments in every
+// version, instant quality switches and seeks, and an edge that moves
+// steadily. The top version is encoded at well above the file's own bitrate,
+// so nothing is visibly lost.
 type rung struct {
 	Name    string
-	Long    int  // long side in pixels: 1920 for "1080p"
-	Bitrate int  // kbps cap for a full 16:9 picture (for a copied rung: the source bitrate)
-	Copy    bool // the original video stream, not re-encoded
+	Long    int // long side in pixels: 1920 for "1080p"
+	Bitrate int // kbps cap for a full 16:9 picture
 }
 
 var ladder = []rung{
-	{"1080p", 1920, 5000, false},
-	{"720p", 1280, 2800, false},
-	{"480p", 854, 1400, false},
-	{"360p", 640, 800, false},
+	{"1080p", 1920, 5000},
+	{"720p", 1280, 2800},
+	{"480p", 854, 1400},
+	{"360p", 640, 800},
 }
+
+// segmentSeconds is the keyframe interval and the HLS segment length.
+const segmentSeconds = 4
 
 // Versions decides how many quality versions are prepared.
 const (
-	VersionsOriginal = "original" // one version: the original quality (smallest on disk)
-	VersionsBalanced = "balanced" // original quality plus one smaller version (default)
-	VersionsFull     = "full"     // original quality plus two smaller versions
+	VersionsOriginal = "original" // one version: the top quality only (smallest on disk)
+	VersionsBalanced = "balanced" // top quality plus one smaller version (default)
+	VersionsFull     = "full"     // top quality plus two smaller versions
 )
 
-// NormalizeVersions maps unknown values to the default.
-// Preparing speed. Cool paces the encoder at twice playback speed after a
-// ten-minute head start, so it needs about one CPU core and the computer
-// stays quiet and cool; viewers can never catch up with it. Fast uses half
-// the CPU threads flat out and finishes much sooner.
+// Preparing speed: how much of the CPU the encoder may use. On a GPU it
+// hardly matters; on the CPU, cool keeps the computer quiet.
 const (
-	PaceCool = "cool"
-	PaceFast = "fast"
-)
-
-const (
-	paceRate  = 2   // times playback speed
-	paceBurst = 600 // seconds prepared at full speed first
+	PaceCool = "cool" // a quarter of the CPU threads
+	PaceFast = "fast" // half of them
 )
 
 func NormalizePace(p string) string {
@@ -86,45 +86,28 @@ func planLadder(width, height int) []rung {
 	var out []rung
 	for _, r := range ladder {
 		if r.Long <= long+long/20 {
-			out = append(out, rung{r.Name, r.Long, int(float64(r.Bitrate) * area), false})
+			out = append(out, rung{r.Name, r.Long, int(float64(r.Bitrate) * area)})
 		}
 		if len(out) == 3 {
 			break
 		}
 	}
 	if len(out) == 0 {
-		out = []rung{{fmt.Sprintf("%dp", short&^1), long &^ 1, 600, false}}
+		out = []rung{{fmt.Sprintf("%dp", short&^1), long &^ 1, 600}}
 	}
 	return out
 }
 
-// canCopy reports whether the source video can be served as-is: browsers play
-// 8-bit H.264 natively, so re-encoding it would only cost time, disk and quality.
-func canCopy(v *VideoInfo) bool {
-	if v == nil || v.Codec != "h264" || v.HDR || v.Interlaced {
-		return false
-	}
-	if v.PixFmt != "yuv420p" && v.PixFmt != "yuvj420p" {
-		return false // 10-bit or 4:2:2/4:4:4 H.264 does not play in most browsers
-	}
-	if v.SAR != "" && v.SAR != "1:1" && v.SAR != "0:1" && v.SAR != "N/A" {
-		return false // non-square pixels need rescaling
-	}
-	long := max(v.Width, v.Height)
-	if long > 1920+1920/20 {
-		return false // 4K: serve a 1080p version instead
-	}
-	return v.Kbps > 0 && v.Kbps <= 10000 // a 40 Mbps Blu-ray remux would choke guests
-}
-
-// planVersions chooses what to prepare for this file.
+// planVersions chooses what to prepare for this file. The top version's cap
+// follows the source: 1.5× its bitrate, at least the ladder's figure, so a
+// re-encode of a good file stays visibly identical, and at most 10 Mbps so a
+// Blu-ray remux doesn't choke guests.
 func planVersions(v *VideoInfo, versions string) []rung {
 	full := planLadder(v.Width, v.Height)
 	extra := map[string]int{VersionsOriginal: 0, VersionsBalanced: 1, VersionsFull: 2}[NormalizeVersions(versions)]
 	top := full[0]
-	if canCopy(v) {
-		top.Copy = true
-		top.Bitrate = v.Kbps
+	if v.Kbps > 0 {
+		top.Bitrate = min(10000, max(top.Bitrate, v.Kbps*3/2))
 	}
 	out := []rung{top}
 	for i := 1; i < len(full) && len(out) <= extra; i++ {
@@ -133,16 +116,12 @@ func planVersions(v *VideoInfo, versions string) []rung {
 	return out
 }
 
-// estimateBytes predicts the disk space a plan will use. Capped-quality
-// encodes typically land around 60% of their cap.
+// estimateBytes predicts the disk space a plan will use. Capped encodes
+// typically land around 70% of their cap.
 func estimateBytes(info Info, rungs []rung, audioTracks int) int64 {
 	kbps := 0
 	for _, r := range rungs {
-		if r.Copy {
-			kbps += r.Bitrate
-		} else {
-			kbps += r.Bitrate * 6 / 10
-		}
+		kbps += r.Bitrate * 7 / 10
 	}
 	kbps += audioTracks * 128
 	return int64(info.Duration * float64(kbps) * 1000 / 8)
@@ -285,98 +264,82 @@ func streamOpts(opts []string, i int) []string {
 	return out
 }
 
-// buildArgs returns the ffmpeg arguments for one transcode into dir.
-func buildArgs(input string, info Info, enc Encoder, tonemap bool, versions, pace string, canPace bool) ([]string, []rung, []AudioInfo) {
+// buildArgs returns the ffmpeg arguments for one transcode into dir: every
+// version in one pass, keyframes every segmentSeconds in all of them.
+func buildArgs(input string, info Info, enc Encoder, tonemap bool, versions, pace string) ([]string, []rung, []AudioInfo) {
 	rungs := planVersions(info.Video, versions)
 	portrait := info.Video.Height > info.Video.Width
 	audio := info.Audio
 	if len(audio) > maxAudioTracks {
 		audio = audio[:maxAudioTracks]
 	}
-	copyTop := rungs[0].Copy
-	encoded := rungs
-	if copyTop {
-		encoded = rungs[1:]
-	}
 
 	// The host usually watches on this same computer, so the browser must
-	// keep enough CPU to decode the picture smoothly: cool mode uses a quarter
-	// of the threads and is paced, fast mode uses half of them flat out.
-	cool := NormalizePace(pace) == PaceCool
-	threads := encodeThreads(cool)
+	// keep enough CPU to decode the picture smoothly.
+	threads := encodeThreads(NormalizePace(pace) == PaceCool)
 	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-threads", fmt.Sprint(threads)}
 	args = append(args, enc.globalArgs()...)
-	if cool && canPace {
-		args = append(args, "-readrate", fmt.Sprint(paceRate), "-readrate_initial_burst", fmt.Sprint(paceBurst))
-	}
 	args = append(args, "-i", input)
-	if len(encoded) > 0 {
-		// Video chain: optional deinterlace and HDR tonemap, square pixels, split.
-		var pre []string
-		if info.Video.Interlaced {
-			pre = append(pre, "yadif=mode=0:deint=1")
-		}
-		if info.Video.HDR && tonemap {
-			pre = append(pre, "zscale=t=linear:npl=100", "format=gbrpf32le", "zscale=p=bt709",
-				"tonemap=tonemap=hable:desat=0", "zscale=t=bt709:m=bt709:r=tv", "format=yuv420p")
-		}
-		pre = append(pre, "scale=trunc(iw*sar/2)*2:ih", "setsar=1")
-		gpu := enc.Name == vaapiName
-		if gpu {
-			// Frames go to the GPU once; each version is scaled there.
-			pre = append(pre, "format=nv12", "hwupload")
-		}
-		fc := "[0:v:0]" + strings.Join(pre, ",") + fmt.Sprintf(",split=%d", len(encoded))
-		for i := range encoded {
-			fc += fmt.Sprintf("[s%d]", i)
-		}
-		for i, r := range encoded {
-			// Scale the long side down to the rung, never up, keeping the shape.
-			switch {
-			case gpu && portrait:
-				fc += fmt.Sprintf(";[s%d]scale_vaapi=w=-2:h='min(%d,ih)'[v%d]", i, r.Long, i)
-			case gpu:
-				fc += fmt.Sprintf(";[s%d]scale_vaapi=w='min(%d,iw)':h=-2[v%d]", i, r.Long, i)
-			case portrait:
-				fc += fmt.Sprintf(";[s%d]scale=-2:'min(%d,ih)':flags=bicubic[v%d]", i, r.Long, i)
-			default:
-				fc += fmt.Sprintf(";[s%d]scale='min(%d,iw)':-2:flags=bicubic[v%d]", i, r.Long, i)
-			}
-		}
-		args = append(args, "-filter_complex", fc, "-filter_complex_threads", fmt.Sprint(threads))
+
+	// Video chain: optional deinterlace and HDR tonemap, square pixels, split.
+	var pre []string
+	if info.Video.Interlaced {
+		pre = append(pre, "yadif=mode=0:deint=1")
 	}
-	if copyTop {
-		args = append(args, "-map", "0:v:0")
+	if info.Video.HDR && tonemap {
+		pre = append(pre, "zscale=t=linear:npl=100", "format=gbrpf32le", "zscale=p=bt709",
+			"tonemap=tonemap=hable:desat=0", "zscale=t=bt709:m=bt709:r=tv", "format=yuv420p")
 	}
-	for i := range encoded {
+	pre = append(pre, "scale=trunc(iw*sar/2)*2:ih", "setsar=1")
+	gpu := enc.Name == vaapiName
+	if gpu {
+		// Frames go to the GPU once; each version is scaled there.
+		pre = append(pre, "format=nv12", "hwupload")
+	}
+	fc := "[0:v:0]" + strings.Join(pre, ",") + fmt.Sprintf(",split=%d", len(rungs))
+	for i := range rungs {
+		fc += fmt.Sprintf("[s%d]", i)
+	}
+	for i, r := range rungs {
+		// Scale the long side down to the rung, never up, keeping the shape.
+		switch {
+		case gpu && portrait:
+			fc += fmt.Sprintf(";[s%d]scale_vaapi=w=-2:h='min(%d,ih)'[v%d]", i, r.Long, i)
+		case gpu:
+			fc += fmt.Sprintf(";[s%d]scale_vaapi=w='min(%d,iw)':h=-2[v%d]", i, r.Long, i)
+		case portrait:
+			fc += fmt.Sprintf(";[s%d]scale=-2:'min(%d,ih)':flags=bicubic[v%d]", i, r.Long, i)
+		default:
+			fc += fmt.Sprintf(";[s%d]scale='min(%d,iw)':-2:flags=bicubic[v%d]", i, r.Long, i)
+		}
+	}
+	args = append(args, "-filter_complex", fc, "-filter_complex_threads", fmt.Sprint(threads))
+	for i := range rungs {
 		args = append(args, "-map", fmt.Sprintf("[v%d]", i))
 	}
 	for _, a := range audio {
 		args = append(args, "-map", fmt.Sprintf("0:a:%d", a.Index))
 	}
 
-	// Per video stream: copy the original, or encode with a quality cap.
+	// Per version: capped quality, keyframes on the same 4-second marks.
 	soft := enc.Name == softwareEncoder.Name
+	fps := info.Video.FPS
+	if fps <= 0 || fps > 120 {
+		fps = 24
+	}
+	gop := int(fps*segmentSeconds + 0.5)
 	for i, r := range rungs {
-		if r.Copy {
-			args = append(args, fmt.Sprintf("-c:v:%d", i), "copy")
-			continue
-		}
 		args = append(args, streamOpts(enc.Args, i)...)
 		if soft {
-			args = append(args, fmt.Sprintf("-threads:v:%d", i), fmt.Sprint(max(2, threads/len(encoded))))
+			args = append(args, fmt.Sprintf("-threads:v:%d", i), fmt.Sprint(max(2, threads/len(rungs))))
 		}
-		if copyTop {
-			// Keyframes exactly where the original has them, so all versions
-			// cut into the same 4-second segments and switching is seamless.
-			args = append(args, fmt.Sprintf("-force_key_frames:v:%d", i), "source", fmt.Sprintf("-g:v:%d", i), "100000")
-		} else {
-			args = append(args, fmt.Sprintf("-force_key_frames:v:%d", i), "expr:gte(t,n_forced*4)")
-		}
+		args = append(args,
+			fmt.Sprintf("-force_key_frames:v:%d", i), fmt.Sprintf("expr:gte(t,n_forced*%d)", segmentSeconds),
+			fmt.Sprintf("-g:v:%d", i), fmt.Sprint(gop),
+		)
 		if soft {
 			// Capped quality: simple scenes use far fewer bits than the cap.
-			crf := 21 + i
-			args = append(args, fmt.Sprintf("-crf:v:%d", i), fmt.Sprint(crf))
+			args = append(args, fmt.Sprintf("-crf:v:%d", i), fmt.Sprint(20+i))
 		} else {
 			args = append(args, fmt.Sprintf("-b:v:%d", i), fmt.Sprintf("%dk", r.Bitrate*7/10))
 		}
@@ -390,7 +353,7 @@ func buildArgs(input string, info Info, enc Encoder, tonemap bool, versions, pac
 		if a.Codec == "aac" && a.Channels > 0 && a.Channels <= 2 {
 			args = append(args, fmt.Sprintf("-c:a:%d", j), "copy")
 		} else {
-			args = append(args, fmt.Sprintf("-c:a:%d", j), "aac", fmt.Sprintf("-b:a:%d", j), "128k",
+			args = append(args, fmt.Sprintf("-c:a:%d", j), "aac", fmt.Sprintf("-b:a:%d", j), "160k",
 				fmt.Sprintf("-ac:a:%d", j), "2", fmt.Sprintf("-ar:a:%d", j), "48000")
 		}
 	}
@@ -419,7 +382,7 @@ func buildArgs(input string, info Info, enc Encoder, tonemap bool, versions, pac
 	}
 
 	args = append(args,
-		"-f", "hls", "-hls_time", "4", "-hls_playlist_type", "event",
+		"-f", "hls", "-hls_time", fmt.Sprint(segmentSeconds), "-hls_playlist_type", "event",
 		"-hls_segment_type", "fmp4", "-hls_flags", "independent_segments+temp_file",
 		"-hls_fmp4_init_filename", "init.mp4",
 		"-hls_segment_filename", "s_%v/seg_%05d.m4s",
@@ -445,55 +408,6 @@ func subtitleArgs(input string, subs []SubInfo) ([]string, []SubInfo) {
 	return args, keep
 }
 
-var bandwidthRe = regexp.MustCompile(`BANDWIDTH=[0-9]+`)
-
-// fixMaster corrects the BANDWIDTH ffmpeg writes into master.m3u8 when an
-// encode starts. ffmpeg can't know the bitrate of a copied stream yet and
-// advertises only a few hundred kbps for it, which would make players pick
-// qualities on wrong numbers. Peak is taken as 1.5× the average for copies
-// and the encode cap for the rest, plus the stereo AAC track. Values that
-// are already plausible are kept: when the encode finishes ffmpeg rewrites
-// the playlist with measured numbers, which are better than estimates.
-func fixMaster(path string, rungs []rung) error {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(string(b), "\n")
-	changed := false
-	for i := 1; i < len(lines); i++ {
-		var n int
-		if _, err := fmt.Sscanf(strings.TrimSpace(lines[i]), "s_v%d/index.m3u8", &n); err != nil || n < 0 || n >= len(rungs) {
-			continue
-		}
-		if !strings.HasPrefix(lines[i-1], "#EXT-X-STREAM-INF:") {
-			continue
-		}
-		kbps := rungs[n].Bitrate
-		if rungs[n].Copy {
-			kbps = kbps * 3 / 2
-		}
-		want := (kbps + 128) * 1000
-		var have int
-		if m := bandwidthRe.FindString(lines[i-1]); m != "" {
-			have, _ = strconv.Atoi(strings.TrimPrefix(m, "BANDWIDTH="))
-		}
-		if have*2 >= want {
-			continue
-		}
-		lines[i-1] = bandwidthRe.ReplaceAllString(lines[i-1], fmt.Sprintf("BANDWIDTH=%d", want))
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
 // encodeThreads is how many threads ffmpeg may use: a quarter of the logical
 // CPUs when cool, half when fast, at least 2 either way.
 func encodeThreads(cool bool) int {
@@ -501,13 +415,4 @@ func encodeThreads(cool bool) int {
 		return max(2, runtime.NumCPU()/4)
 	}
 	return max(2, runtime.NumCPU()/2)
-}
-
-// HasOption reports whether this ffmpeg knows a command-line option.
-func HasOption(ffmpeg, name string) bool {
-	out, err := exec.Command(ffmpeg, "-hide_banner", "-h", "full").Output()
-	if err != nil {
-		return false
-	}
-	return regexp.MustCompile(`(?m)^\s*-` + regexp.QuoteMeta(name) + `\s`).Match(out)
 }

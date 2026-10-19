@@ -2,6 +2,7 @@ package media
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -284,57 +285,51 @@ func TestCachePruneAndClear(t *testing.T) {
 	}
 }
 
-func TestPlanVersionsAndCopy(t *testing.T) {
-	h264 := &VideoInfo{Codec: "h264", Width: 1920, Height: 800, PixFmt: "yuv420p", Kbps: 2600, SAR: "1:1"}
+func TestPlanVersions(t *testing.T) {
+	h264 := &VideoInfo{Codec: "h264", Width: 1920, Height: 800, PixFmt: "yuv420p", Kbps: 2600}
 	names := func(rs []rung) string {
 		var s []string
 		for _, r := range rs {
-			n := r.Name
-			if r.Copy {
-				n += "(orig)"
-			}
-			s = append(s, n)
+			s = append(s, r.Name)
 		}
 		return strings.Join(s, ",")
 	}
 	cases := map[string]string{
-		VersionsOriginal: "1080p(orig)",
-		VersionsBalanced: "1080p(orig),720p",
-		VersionsFull:     "1080p(orig),720p,480p",
-		"nonsense":       "1080p(orig),720p",
+		VersionsOriginal: "1080p",
+		VersionsBalanced: "1080p,720p",
+		VersionsFull:     "1080p,720p,480p",
+		"nonsense":       "1080p,720p",
 	}
 	for v, want := range cases {
 		if got := names(planVersions(h264, v)); got != want {
 			t.Errorf("%s: got %s want %s", v, got, want)
 		}
 	}
-	// Things browsers can't play directly are re-encoded instead of copied.
-	for name, v := range map[string]*VideoInfo{
-		"hevc":    {Codec: "hevc", Width: 1920, Height: 1080, PixFmt: "yuv420p", Kbps: 3000},
-		"10-bit":  {Codec: "h264", Width: 1920, Height: 1080, PixFmt: "yuv420p10le", Kbps: 3000},
-		"4k":      {Codec: "h264", Width: 3840, Height: 2160, PixFmt: "yuv420p", Kbps: 9000},
-		"remux":   {Codec: "h264", Width: 1920, Height: 1080, PixFmt: "yuv420p", Kbps: 35000},
-		"hdr":     {Codec: "h264", Width: 1920, Height: 1080, PixFmt: "yuv420p", Kbps: 3000, HDR: true},
-		"anamorp": {Codec: "h264", Width: 1440, Height: 1080, PixFmt: "yuv420p", Kbps: 3000, SAR: "4:3"},
-	} {
-		if canCopy(v) {
-			t.Errorf("%s must not be copied", name)
-		}
+	// The top cap follows the source: 1.5× its bitrate, never below the ladder, never above 10 Mbps.
+	if top := planVersions(h264, VersionsBalanced)[0].Bitrate; top != 3900 {
+		t.Errorf("top cap for a 2.6 Mbps source = %d, want 3900", top)
+	}
+	if top := planVersions(&VideoInfo{Width: 1920, Height: 1080, Kbps: 35000}, VersionsBalanced)[0].Bitrate; top != 10000 {
+		t.Errorf("remux cap = %d, want 10000", top)
+	}
+	if top := planVersions(&VideoInfo{Width: 1920, Height: 1080, Kbps: 900}, VersionsBalanced)[0].Bitrate; top != 5000 {
+		t.Errorf("low source cap = %d, want the ladder's 5000", top)
 	}
 	if got := streamOpts([]string{"-c:v", "libx264", "-preset", "fast", "-profile:v", "high"}, 2); strings.Join(got, " ") != "-c:v:2 libx264 -preset:v:2 fast -profile:v:2 high" {
 		t.Errorf("streamOpts: %v", got)
 	}
-	// 145 minutes, original 2.6 Mbps + 720p (~1.2 Mbps) + 2 audio tracks: about 4.6 GB, not 7.6.
+	// 145 minutes, 1080p at 3.9 Mbps cap + 720p + 2 audio tracks: around 5.5 GB.
 	est := estimateBytes(Info{Duration: 145 * 60}, planVersions(h264, VersionsBalanced), 2)
-	if est < 3.5e9 || est > 5.5e9 {
+	if est < 4.5e9 || est > 6.5e9 {
 		t.Errorf("estimate %.1f GB", float64(est)/1e9)
 	}
 }
 
-// TestOriginalIsCopiedAndAligned encodes a real 720p H.264 file: the original
-// picture must be kept as-is, a 480p version added, stereo AAC copied, and both
-// versions cut into the same segments so quality switches are seamless.
-func TestOriginalIsCopiedAndAligned(t *testing.T) {
+// TestVersionsAreAligned encodes a real 720p H.264 file: both versions must
+// be cut into the same number of 4-second segments with keyframes on the
+// same marks, so quality switches and seeks are instant, and playback must
+// be allowed only once the whole short file is prepared.
+func TestVersionsAreAligned(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg not installed")
 	}
@@ -342,7 +337,7 @@ func TestOriginalIsCopiedAndAligned(t *testing.T) {
 	src := filepath.Join(root, "Clip.mp4")
 	gen := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
 		"-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24", "-f", "lavfi", "-i", "sine=frequency=440",
-		"-t", "12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-g", "48",
+		"-t", "12", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-g", "7",
 		"-b:v", "2000k", "-c:a", "aac", "-ac", "2", src)
 	if out, err := gen.CombinedOutput(); err != nil {
 		t.Fatalf("%v %s", err, out)
@@ -362,18 +357,31 @@ func TestOriginalIsCopiedAndAligned(t *testing.T) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if st.State != StateReady || !st.Original || strings.Join(st.Rungs, ",") != "720p,480p" {
+	if st.State != StateReady || strings.Join(st.Rungs, ",") != "720p,480p" {
 		t.Fatalf("status %+v", st)
 	}
 	dir := filepath.Join(m.cache, m.key(items[0]))
-	count := func(sub string) int {
-		e, _ := filepath.Glob(filepath.Join(dir, sub, "seg_*.m4s"))
-		return len(e)
+	segs := func(sub string) []float64 {
+		b, _ := os.ReadFile(filepath.Join(dir, sub, "index.m3u8"))
+		var out []float64
+		for _, l := range strings.Split(string(b), "\n") {
+			if strings.HasPrefix(l, "#EXTINF:") {
+				var d float64
+				fmt.Sscanf(strings.TrimPrefix(l, "#EXTINF:"), "%f", &d)
+				out = append(out, d)
+			}
+		}
+		return out
 	}
-	if a, b := count("s_v0"), count("s_v1"); a == 0 || a != b {
-		t.Fatalf("versions must have the same segments, got %d and %d", a, b)
+	a, b := segs("s_v0"), segs("s_v1")
+	if len(a) != 3 || len(b) != 3 {
+		t.Fatalf("12 s must give 3 segments of 4 s in every version, got %v and %v", a, b)
 	}
-	// The original stream is copied: its bitrate stays at the source's ~2 Mbps.
+	for i := range a {
+		if a[i] < 3.9 || a[i] > 4.1 || b[i] < 3.9 || b[i] > 4.1 {
+			t.Fatalf("segments must be 4 s in every version, got %v and %v", a, b)
+		}
+	}
 	master, _ := os.ReadFile(filepath.Join(dir, "master.m3u8"))
 	if !strings.Contains(string(master), "RESOLUTION=1280x720") || !strings.Contains(string(master), "RESOLUTION=854x480") {
 		t.Fatalf("master:\n%s", master)
@@ -383,56 +391,18 @@ func TestOriginalIsCopiedAndAligned(t *testing.T) {
 	}
 }
 
-func TestFixMasterBandwidth(t *testing.T) {
-	p := filepath.Join(t.TempDir(), "master.m3u8")
-	in := "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=140800,RESOLUTION=1920x800,CODECS=\"avc1.640028,mp4a.40.2\",AUDIO=\"group_aud\"\ns_v0/index.m3u8\n\n#EXT-X-STREAM-INF:BANDWIDTH=2422200,RESOLUTION=1280x534\ns_v1/index.m3u8\n"
-	os.WriteFile(p, []byte(in), 0o600)
-	if err := fixMaster(p, []rung{{Name: "1080p", Bitrate: 4000, Copy: true}, {Name: "720p", Bitrate: 2074}}); err != nil {
-		t.Fatal(err)
-	}
-	b, _ := os.ReadFile(p)
-	out := string(b)
-	// The copy is fixed; the encoded rung's number from ffmpeg is plausible and kept.
-	if !strings.Contains(out, "BANDWIDTH=6128000,RESOLUTION=1920x800") || !strings.Contains(out, "BANDWIDTH=2422200,RESOLUTION=1280x534") {
-		t.Fatalf("bandwidth not fixed:\n%s", out)
-	}
-	if !strings.Contains(out, "s_v0/index.m3u8") || !strings.Contains(out, `CODECS="avc1.640028,mp4a.40.2"`) {
-		t.Fatalf("other attributes lost:\n%s", out)
-	}
-	// Measured numbers written by ffmpeg at the end are never replaced.
-	measured := strings.Replace(out, "BANDWIDTH=6128000", "BANDWIDTH=8913534", 1)
-	os.WriteFile(p, []byte(measured), 0o600)
-	fixMaster(p, []rung{{Name: "1080p", Bitrate: 4000, Copy: true}})
-	if b, _ := os.ReadFile(p); string(b) != measured {
-		t.Fatal("measured bandwidth was overwritten")
-	}
-}
-
-func TestPaceArgs(t *testing.T) {
-	info := Info{Duration: 100, Video: &VideoInfo{Codec: "h264", Width: 1920, Height: 800, PixFmt: "yuv420p", Kbps: 3000}}
-	cool, _, _ := buildArgs("in.mkv", info, softwareEncoder, false, VersionsBalanced, PaceCool, true)
-	fast, _, _ := buildArgs("in.mkv", info, softwareEncoder, false, VersionsBalanced, PaceFast, true)
-	old, _, _ := buildArgs("in.mkv", info, softwareEncoder, false, VersionsBalanced, PaceCool, false)
-	has := func(args []string, s string) bool {
-		return strings.Contains(" "+strings.Join(args, " ")+" ", " "+s+" ")
-	}
-	if !has(cool, "-readrate 2") || !has(cool, "-readrate_initial_burst 600") {
-		t.Fatalf("cool must be paced: %v", cool)
-	}
-	if has(fast, "-readrate 2") || has(old, "-readrate 2") {
-		t.Fatal("fast mode and an old ffmpeg must not be paced")
-	}
-	// Pacing is an input option: it must come before -i.
-	ri, ii := -1, -1
-	for i, a := range cool {
-		if a == "-readrate" {
-			ri = i
-		}
-		if a == "-i" {
-			ii = i
+func TestPaceAndKeyframeArgs(t *testing.T) {
+	info := Info{Duration: 100, Video: &VideoInfo{Codec: "h264", Width: 1920, Height: 800, PixFmt: "yuv420p", Kbps: 3000, FPS: 23.976}}
+	cool, _, _ := buildArgs("in.mkv", info, softwareEncoder, false, VersionsBalanced, PaceCool)
+	joined := " " + strings.Join(cool, " ") + " "
+	for _, want := range []string{"-force_key_frames:v:0 expr:gte(t,n_forced*4)", "-force_key_frames:v:1 expr:gte(t,n_forced*4)", "-g:v:0 96", "-g:v:1 96", "-hls_time 4", "-maxrate:v:0 4500k"} {
+		if !strings.Contains(joined, " "+want+" ") {
+			t.Errorf("missing %q in %v", want, cool)
 		}
 	}
-	if ri < 0 || ri > ii {
-		t.Fatalf("-readrate must precede -i: %v", cool)
+	for _, no := range []string{"-readrate", "copy", "source"} {
+		if strings.Contains(joined, " "+no+" ") {
+			t.Errorf("%q must be gone: %v", no, cool)
+		}
 	}
 }

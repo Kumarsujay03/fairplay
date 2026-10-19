@@ -30,7 +30,6 @@ export interface MediaStatus {
   height?: number
   bitrate?: number
   versions?: string
-  original?: boolean
   estBytes?: number
   disk?: number
 }

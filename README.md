@@ -77,17 +77,17 @@ It opens only port 8321, and only to your local network, using ufw, firewalld, W
 
 Prepared videos are kept so a second showing starts instantly.
 
-When the browser can play the original picture (most H.264 files), FairPlay streams it untouched and only encodes the smaller versions, so a film takes about 1.3–1.5× its file size. For a 3.5 GB 1080p film:
+Every version is encoded, with a keyframe every 4 seconds so all versions share the same pieces; the top version gets 1.5× the file's own bitrate, so nothing is visibly lost. For a 3.5 GB 1080p film:
 
 | Quality versions (`-versions`) | Disk space |
 |---|---|
-| `original` | about 3.5 GB |
-| `balanced` (default): original + 720p | about 4.5–5 GB |
-| `full`: original + 720p + 480p | about 5.2–5.5 GB |
+| `original`: top quality only | about 4 GB |
+| `balanced` (default): top quality + 720p | about 5.5 GB |
+| `full`: top quality + 720p + 480p | about 6.5 GB |
 
-On Linux with an Intel or AMD GPU, the smaller versions are encoded on the GPU (VAAPI) and preparing costs about half a CPU core. If the start-up banner says `Encoder CPU (libx264)` on such a machine, install the VAAPI driver it names and start again.
+On Linux with an Intel or AMD GPU, videos are encoded on the GPU (VAAPI): a 2-hour film is ready in about 15 minutes using less than one CPU core. If the start-up banner says `Encoder CPU (libx264)` on such a machine, install the VAAPI driver it names and start again.
 
-Files the browser can't play as they are, such as HEVC, are encoded in full and usually end up about the same size as the source. The host console shows the real figure for each video.
+The host console shows the real figure for each video.
 
 | OS | Where they are kept |
 |---|---|
