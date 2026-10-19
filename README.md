@@ -59,8 +59,6 @@ That's all. FairPlay picks your Videos, Movies or Downloads folder, or creates `
 3. When they open it, admit them from the lobby.
 4. Press play. Everyone starts on the same tick.
 
-Preparing a film takes the computer's GPU (or CPU) for a while. FairPlay prepares at full speed until it is 10 minutes ahead of the room, then rests until the lead shrinks to 5 minutes, so the computer you host from stays free while you watch. If you stop FairPlay mid-way, the next start continues where it left off.
-
 The host link printed in the terminal works like a password, so keep it private. To stop, press **Stop FairPlay** in the host console, press Ctrl+C in the terminal, or run `fairplay stop` from any other terminal. Each one ends the room for everyone. Invites survive a restart, guests whose device was already admitted rejoin by themselves, and your host key changes on every start.
 
 `fairplay check` shows what FairPlay found on your computer, if something doesn't work.
@@ -77,19 +75,7 @@ It opens only port 8321, and only to your local network, using ufw, firewalld, W
 
 ## Disk space
 
-Prepared videos are kept so a second showing starts instantly. An interrupted preparation continues where it stopped the next time the file is played, instead of starting over.
-
-Every version is encoded, with a keyframe every 4 seconds so all versions share the same pieces; the top version gets 1.5× the file's own bitrate, so nothing is visibly lost. For a 3.5 GB 1080p film:
-
-| Quality versions (`-versions`) | Disk space |
-|---|---|
-| `original`: top quality only | about 4 GB |
-| `balanced` (default): top quality + 720p | about 5.5 GB |
-| `full`: top quality + 720p + 480p | about 6.5 GB |
-
-On Linux with an Intel or AMD GPU, videos are encoded on the GPU (VAAPI): a 2-hour film is ready in about 15 minutes using less than one CPU core. If the start-up banner says `Encoder CPU (libx264)` on such a machine, install the VAAPI driver it names and start again.
-
-The host console shows the real figure for each video.
+Prepared videos are kept so a second showing starts instantly. A full movie takes a few GB.
 
 | OS | Where they are kept |
 |---|---|
@@ -198,8 +184,6 @@ The server is the clock. Each browser pings it every 2 seconds and estimates its
 | `-max` | `12` | Maximum guests |
 | `-open` | `true` | Open the host console in your browser on start |
 | `-intermission` | `5` | Default intermission length in minutes. The host can change it in the console |
-| `-prepare` | `cool` | Preparing speed: `cool` paces the encoder at twice playback speed on a quarter of the CPU threads (quiet and cool, viewers never catch up); `fast` uses half the CPU flat out. The host can change it in the console |
-| `-versions` | `balanced` | Quality versions for new videos: `original`, `balanced` (original + 720p) or `full` (original + 720p + 480p). The host can change it in the console |
 | `-emoji-preload` | `true` | Prepare every animated reaction in the background once, so they animate the moment they are sent. `false` prepares each one the first time it is used |
 | `-cache-max` | `40` | GB of prepared videos to keep. Older ones are removed first. `0` means no limit |
 | `-update` | `auto` | `auto`, `check` or `off` |

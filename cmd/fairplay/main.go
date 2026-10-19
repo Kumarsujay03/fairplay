@@ -36,11 +36,11 @@ import (
 var version = "dev"
 
 type options struct {
-	media, tunnel, tunnelBin, ffmpeg, ffprobe, cache, data, name, update, versions, pace string
-	port, maxGuests, interMinutes                                                        int
-	lan, autoAdmit, open, emojiPreload                                                   bool
-	mediaSet                                                                             bool // -media was given explicitly
-	cacheMaxGB                                                                           float64
+	media, tunnel, tunnelBin, ffmpeg, ffprobe, cache, data, name, update string
+	port, maxGuests, interMinutes                                        int
+	lan, autoAdmit, open, emojiPreload                                   bool
+	mediaSet                                                             bool // -media was given explicitly
+	cacheMaxGB                                                           float64
 }
 
 func parseFlags(name string, args []string) options {
@@ -60,9 +60,7 @@ func parseFlags(name string, args []string) options {
 	fs.StringVar(&o.data, "data", filepath.Join(cfgDir, "fairplay"), "folder for invites and settings")
 	fs.StringVar(&o.name, "name", "Movie night", "room name guests see")
 	fs.IntVar(&o.maxGuests, "max", 12, "maximum number of guests")
-	fs.StringVar(&o.versions, "versions", "balanced", "quality versions to prepare: original (smallest), balanced (original + 720p) or full (original + 720p + 480p)")
 	fs.IntVar(&o.interMinutes, "intermission", 5, "default intermission length in minutes (the host can change it in the console)")
-	fs.StringVar(&o.pace, "prepare", "cool", "preparing speed: cool (paced at twice playback speed after a 10-minute head start, about one CPU core) or fast (half the CPU, finishes sooner)")
 	fs.BoolVar(&o.emojiPreload, "emoji-preload", true, "prepare every animated reaction in the background (a one-time download), so they animate the moment they are sent")
 	fs.BoolVar(&o.autoAdmit, "auto-admit", false, "admit first-time invite opens without the lobby (second devices always need approval)")
 	fs.BoolVar(&o.open, "open", true, "open the host console in your browser on start")
@@ -171,10 +169,9 @@ func start(o options) {
 		fail("%v", err)
 	}
 	mm.MaxCache = int64(o.cacheMaxGB * 1e9)
-	h := hub.New(store, mm, hub.Settings{RoomName: o.name, AutoAdmit: o.autoAdmit, Reactions: true, MaxGuests: o.maxGuests, InterMinutes: o.interMinutes, Versions: o.versions, Pace: o.pace})
+	h := hub.New(store, mm, hub.Settings{RoomName: o.name, AutoAdmit: o.autoAdmit, Reactions: true, MaxGuests: o.maxGuests, InterMinutes: o.interMinutes})
 	srv := server.New(store, h, mm, webui.FS())
 	mm.Current = h.CurrentMedia
-	mm.Playhead = h.Playhead
 	if freed := mm.Prune(mm.MaxCache, ""); freed > 0 {
 		log.Printf("freed %.1f GB of older prepared videos (limit %.0f GB, change with -cache-max)", float64(freed)/1e9, o.cacheMaxGB)
 	}
@@ -280,7 +277,7 @@ func start(o options) {
 	opened := o.open && openBrowser(hostURL)
 	printBanner(bannerInfo{
 		hostURL: hostURL, opened: opened, root: mm.Root(), created: created, lan: lanURLs, fw: fw,
-		tunnel: o.tunnel, tunnelMissing: o.tunnel != "off" && tunnelBin == "", encoder: mm.EncoderLabel(), encoderHint: mm.EncoderHint(),
+		tunnel: o.tunnel, tunnelMissing: o.tunnel != "off" && tunnelBin == "", encoder: mm.EncoderName(),
 	})
 
 	<-ctx.Done()
@@ -296,7 +293,6 @@ func start(o options) {
 type bannerInfo struct {
 	fw                             firewall
 	hostURL, root, tunnel, encoder string
-	encoderHint                    string
 	lan                            []string
 	opened, created, tunnelMissing bool
 }
@@ -329,11 +325,7 @@ func printBanner(b bannerInfo) {
 	default:
 		fmt.Printf("  Internet   starting %s, the public link appears in the host console\n", b.tunnel)
 	}
-	fmt.Printf("  Encoder    %s\n", b.encoder)
-	if b.encoderHint != "" {
-		fmt.Printf("             %s\n", b.encoderHint)
-	}
-	fmt.Println()
+	fmt.Printf("  Encoder    %s\n\n", b.encoder)
 	fmt.Print("  Press Ctrl+C to stop. Stopping ends the room for everyone.\n\n")
 }
 

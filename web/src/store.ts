@@ -18,7 +18,6 @@ export interface MediaStatus {
   state: 'idle' | 'probing' | 'encoding' | 'ready' | 'error'
   playable: boolean
   encoded: number
-  idle?: boolean
   duration: number
   speed: number
   error?: string
@@ -30,9 +29,6 @@ export interface MediaStatus {
   width?: number
   height?: number
   bitrate?: number
-  versions?: string
-  estBytes?: number
-  disk?: number
 }
 
 export interface Peer {
@@ -97,8 +93,6 @@ export interface HostSettings {
   reactions: boolean
   maxGuests: number
   interMinutes: number
-  versions: 'original' | 'balanced' | 'full'
-  pace: 'cool' | 'fast'
 }
 
 export interface Tunnel {

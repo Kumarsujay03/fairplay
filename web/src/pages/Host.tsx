@@ -31,12 +31,6 @@ function saveToken(id: string, token: string) {
   } catch {}
 }
 
-const versionHint: Record<string, string> = {
-  original: 'Smallest on disk, but every viewer needs a connection fast enough for the top quality.',
-  balanced: 'Best experience: top quality for good connections and a 720p version for weak ones.',
-  full: 'Adds a 480p copy for very slow connections, using a little more disk.',
-}
-
 export function Host() {
   const [phase, setPhase] = useState<'checking' | 'login' | 'in'>('checking')
   const [key, setKey] = useState('')
@@ -509,12 +503,7 @@ function MediaSummary({ m }: { m: S.MediaStatus }) {
           </div>
           <div class="row wrap">
             {m.state === 'ready' && <span class="tag ok"><Icon name="check" size={12} /> Ready</span>}
-            {m.state === 'encoding' && !m.idle && <span class="tag warn">Encoding {pct.toFixed(0)}% · {m.speed?.toFixed(1)}×</span>}
-            {m.state === 'encoding' && m.idle && (
-              <span class="tag neutral" title="Far enough ahead of the room; it continues when the lead shrinks to 5 minutes, so this computer stays free while you watch">
-                Encoding {pct.toFixed(0)}% · 10 min ahead, resting
-              </span>
-            )}
+            {m.state === 'encoding' && <span class="tag warn">Encoding {pct.toFixed(0)}% · {m.speed?.toFixed(1)}×</span>}
             {m.state === 'probing' && <span class="tag neutral">Reading file…</span>}
             {m.state === 'error' && <span class="tag bad">Error</span>}
             {m.playable && m.state !== 'ready' && <span class="tag ok">Playable now</span>}
@@ -532,11 +521,6 @@ function MediaSummary({ m }: { m: S.MediaStatus }) {
           <EncoderLead m={m} />
         </>
       )}
-      {(m.estBytes || m.disk) ? (
-        <div class="caption dim">
-          {m.state === 'ready' ? `Uses ${fmtBytes(m.disk || m.estBytes || 0)} on disk` : `About ${fmtBytes(m.estBytes || 0)} on disk when done${m.disk ? ` · ${fmtBytes(m.disk)} so far` : ''}`}
-        </div>
-      ) : null}
       {m.playable && S.media.value?.id === m.id && <RoomTracks m={m} />}
       {m.error && <div class="caption warn-text">{m.error}</div>}
       {m.notes?.map((n) => <div class="caption muted" key={n}>{n}</div>)}
@@ -1068,29 +1052,6 @@ function RoomSettings() {
           <span class={`switch ${s[k] ? 'on' : ''}`} />
         </button>
       ))}
-      <label class="col tight">
-        <span class="label dim">Quality versions for new videos</span>
-        <select class="input select" value={s.versions || 'balanced'} onChange={(e) => set({ versions: (e.target as HTMLSelectElement).value as S.HostSettings['versions'] })}>
-          <option value="original">Top quality only</option>
-          <option value="balanced">Top quality + 720p (recommended)</option>
-          <option value="full">Top quality + 720p + 480p</option>
-        </select>
-        <span class="caption muted">
-          {versionHint[s.versions || 'balanced']} The top quality is encoded at well above the file's own bitrate, so nothing is visibly lost, and every version is cut into the same 4-second pieces so quality switches and seeks are instant.
-        </span>
-      </label>
-      <label class="col tight">
-        <span class="label dim">Preparing speed</span>
-        <select class="input select" value={s.pace || 'cool'} onChange={(e) => set({ pace: (e.target as HTMLSelectElement).value as S.HostSettings['pace'] })}>
-          <option value="cool">Cool · a quarter of the CPU (recommended)</option>
-          <option value="fast">Fast · half the CPU, finishes sooner</option>
-        </select>
-        <span class="caption muted">
-          {(s.pace || 'cool') === 'cool'
-            ? 'With a GPU, preparing takes less than one CPU core either way and a 2-hour film is ready in about 15 minutes. Without one, cool keeps the computer quiet. Playback can start after 45 seconds are prepared; skipping ahead is limited to what is prepared.'
-            : 'Uses half of the CPU threads. On a CPU-only computer it gets warmer and the fan louder, but the film is ready sooner.'}
-        </span>
-      </label>
       <label class="row">
         <span class="dim grow">Maximum guests</span>
         <input class="input num" type="number" min={1} max={50} value={s.maxGuests} onChange={(e) => set({ maxGuests: parseInt((e.target as HTMLInputElement).value) || 12 })} />

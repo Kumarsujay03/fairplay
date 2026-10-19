@@ -35,10 +35,6 @@ type Settings struct {
 	MaxGuests  int    `json:"maxGuests"`
 	// InterMinutes is the default intermission length the host's buttons use.
 	InterMinutes int `json:"interMinutes"`
-	// Versions is how many quality versions are prepared: original, balanced or full.
-	Versions string `json:"versions"`
-	// Pace is how fast videos are prepared: cool (paced, about one core) or fast.
-	Pace string `json:"pace"`
 }
 
 type TunnelInfo struct {
@@ -135,12 +131,6 @@ type Hub struct {
 func New(a *auth.Store, m *media.Manager, s Settings) *Hub {
 	if s.InterMinutes <= 0 {
 		s.InterMinutes = 5
-	}
-	s.Versions = media.NormalizeVersions(s.Versions)
-	s.Pace = media.NormalizePace(s.Pace)
-	if m != nil {
-		m.SetVersions(s.Versions)
-		m.SetPace(s.Pace)
 	}
 	h := &Hub{
 		auth: a, media: m, room: room.New(), settings: s,
@@ -411,14 +401,6 @@ func (h *Hub) CurrentMedia() string {
 	return h.room.State().MediaID
 }
 
-// Playhead is the room's video, position and play state, for the encoder.
-func (h *Hub) Playhead() (string, float64, bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	s := h.room.State()
-	return s.MediaID, s.PositionAt(h.now()), s.Playing
-}
-
 func (h *Hub) Tunnel() TunnelInfo {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -542,12 +524,6 @@ func (h *Hub) onCommand(c *client, m inMsg) {
 	switch m.Op {
 	case "play":
 		s, ok = h.room.Play(now, lead, c.name)
-		if !ok && h.room.State().Reason == room.ReasonLoading {
-			// Pressed while the video is still being prepared: start the
-			// moment it is playable instead of ignoring the press.
-			h.autoplay = true
-			h.systemChatLocked(c.name + " pressed play: it starts as soon as the video is ready")
-		}
 	case "pause":
 		s, ok = h.room.Pause(now, room.ReasonHost, c.name)
 	case "seek":
@@ -635,12 +611,6 @@ func (h *Hub) onHost(c *client, m inMsg) {
 			ns.InterMinutes = 5
 		}
 		ns.InterMinutes = clampInt(ns.InterMinutes, 1, 120)
-		ns.Versions = media.NormalizeVersions(ns.Versions)
-		ns.Pace = media.NormalizePace(ns.Pace)
-		if h.media != nil {
-			h.media.SetVersions(ns.Versions)
-			h.media.SetPace(ns.Pace)
-		}
 		h.mu.Lock()
 		h.settings = ns
 		h.broadcastLocked(msg{"t": "settings", "settings": h.publicSettingsLocked()})

@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -65,10 +64,6 @@ type Status struct {
 	Width    int          `json:"width,omitempty"`
 	Height   int          `json:"height,omitempty"`
 	Bitrate  int          `json:"bitrate,omitempty"` // top rung kbps, for the upload estimate
-	Versions string       `json:"versions,omitempty"`
-	EstBytes int64        `json:"estBytes,omitempty"` // predicted disk use when finished
-	Disk     int64        `json:"disk,omitempty"`     // disk use so far
-	Idle     bool         `json:"idle,omitempty"`     // frozen: far enough ahead of the room
 	key      string
 }
 
@@ -79,8 +74,6 @@ type Manager struct {
 	ffprobe        string
 	enc            Encoder
 	tonemap        bool
-	versions       atomic.Value // string: VersionsOriginal, VersionsBalanced or VersionsFull
-	pace           atomic.Value // string: PaceCool or PaceFast
 
 	mu       sync.Mutex
 	items    map[string]Item
@@ -92,13 +85,6 @@ type Manager struct {
 	MaxCache int64
 	// Current returns the room's video so pruning never removes it.
 	Current func() string
-	// Playhead returns the room's video, position and whether it plays, so
-	// the encoder can idle once it is far enough ahead of the viewers.
-	Playhead func() (id string, pos float64, playing bool)
-	// runAhead and resumeAt are the idle thresholds in seconds; tests shrink them.
-	runAhead, resumeAt float64
-	// testInputArgs go before -i in the encode; tests slow ffmpeg with them.
-	testInputArgs []string
 }
 
 type job struct {
@@ -129,56 +115,11 @@ func NewManager(ctx context.Context, o Options) (*Manager, error) {
 		items: map[string]Item{}, statuses: map[string]*Status{},
 	}
 	m.enc = DetectEncoder(ctx, o.FFmpeg)
-	m.runAhead, m.resumeAt = 600, 300
 	m.tonemap = HasFilter(o.FFmpeg, "zscale") && HasFilter(o.FFmpeg, "tonemap")
 	return m, nil
 }
 
 func (m *Manager) EncoderName() string { return m.enc.Name }
-
-// EncoderLabel and EncoderHint describe the encoder for people.
-func (m *Manager) EncoderLabel() string { return m.enc.Label() }
-func (m *Manager) EncoderHint() string  { return m.enc.Hint() }
-
-// Versions is how many quality versions new encodes get.
-func (m *Manager) Versions() string {
-	if v, ok := m.versions.Load().(string); ok {
-		return v
-	}
-	return VersionsBalanced
-}
-
-// SetVersions changes what the next prepared video gets. Prepared videos are
-// kept per setting, so switching back reuses them.
-func (m *Manager) SetVersions(v string) { m.versions.Store(NormalizeVersions(v)) }
-
-// Pace is how fast new encodes run: cool (paced, default) or fast.
-func (m *Manager) Pace() string {
-	if v, ok := m.pace.Load().(string); ok {
-		return v
-	}
-	return PaceCool
-}
-
-// SetPace applies to the next prepared video. The output is identical either
-// way, so prepared videos are shared between the two settings.
-func (m *Manager) SetPace(p string) { m.pace.Store(NormalizePace(p)) }
-
-// key is the cache folder for an item under the current versions setting.
-func (m *Manager) key(it Item) string { return cacheKey(it, m.Versions()) }
-
-func dirSize(dir string) int64 {
-	var n int64
-	_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
-			if fi, err := d.Info(); err == nil {
-				n += fi.Size()
-			}
-		}
-		return nil
-	})
-	return n
-}
 
 // Root is the folder videos are listed from.
 func (m *Manager) Root() string {
@@ -275,7 +216,7 @@ func (m *Manager) Prepare(id string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	j := &job{id: id, cancel: cancel, done: make(chan struct{})}
 	m.running = j
-	st := &Status{ID: id, Name: it.Name, State: StateProbing, Encoder: m.enc.Name, key: m.key(it)}
+	st := &Status{ID: id, Name: it.Name, State: StateProbing, Encoder: m.enc.Name, key: cacheKey(it)}
 	m.statuses[id] = st
 	m.mu.Unlock()
 
@@ -334,33 +275,14 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 		fail(err)
 		return
 	}
-	versions := m.Versions()
-	rungs, audio := plan(info, versions)
-	var rn []string
-	for _, r := range rungs {
-		rn = append(rn, r.Name)
-	}
-	want := partial{Ladder: ladderVersion, Versions: versions, Encoder: m.enc.Name, Rungs: rn, Audio: len(audio)}
-	dir := filepath.Join(m.cache, m.key(it))
-	// An encode that was interrupted continues where it stopped, as long as
-	// what is on disk was made by this very plan; anything else starts over.
-	completed, perr := loadPartial(dir, want, info.Duration)
-	if completed > 0 {
-		log.Printf("media: %s: continuing from %.0f s", it.RelPath, completed)
-		touch(dir)
-	} else {
-		if perr != nil && !errors.Is(perr, os.ErrNotExist) {
-			log.Printf("media: %s: starting over: %v", it.RelPath, perr)
-		}
-		_ = os.RemoveAll(dir)
-	}
+	dir := filepath.Join(m.cache, cacheKey(it))
+	_ = os.RemoveAll(dir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		fail(err)
 		return
 	}
 
-	args, _, _ := buildArgs(it.abs, info, m.enc, m.tonemap, versions, m.Pace(), encodeOpts{resumeAt: completed, inputArgs: m.testInputArgs})
-	est := estimateBytes(info, rungs, len(audio))
+	args, rungs, audio := buildArgs(it.abs, info, m.enc, m.tonemap)
 	var notes []string
 	if info.Video.HDR && !m.tonemap {
 		notes = append(notes, "HDR source: this ffmpeg has no tonemap filter, colours may look washed out")
@@ -390,23 +312,20 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	for i, a := range audio {
 		at = append(at, AudioTrack{Index: i, Label: alabels[i], Lang: safeLang(a.Lang)})
 	}
+	var rn []string
+	for _, r := range rungs {
+		rn = append(rn, r.Name)
+	}
 	m.update(it.ID, func(s *Status) {
 		s.State, s.Duration, s.Rungs, s.Audio, s.Notes = StateEncoding, info.Duration, rn, at, notes
 		s.Width, s.Height, s.Bitrate = info.Video.Width, info.Video.Height, rungs[0].Bitrate+128
-		s.Versions, s.EstBytes = versions, est
-		// A continued encode is playable at once when enough was kept.
-		s.Encoded = completed
-		s.Playable = completed > 0 && completed >= minf(playableLead, info.Duration-0.5)
-		if completed > 0 {
-			s.Disk = dirSize(dir)
-		}
 	})
 
 	// Subtitles run alongside the video encode.
 	subDone := make(chan []SubTrack, 1)
 	go func() { subDone <- m.extractSubs(ctx, dir, it, info) }()
 
-	cmd := ffmpegCommand(ctx, m.ffmpeg, args...)
+	cmd := exec.CommandContext(ctx, m.ffmpeg, args...)
 	cmd.Dir = dir
 	stdout, _ := cmd.StdoutPipe()
 	var stderr strings.Builder
@@ -417,62 +336,9 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	}
 	lowerPriority(cmd.Process.Pid)
 
-	// Run ahead, then idle. The host usually watches on the computer that
-	// encodes, and an encoder working flat out through the whole showing is
-	// what makes the host's own player stutter while every guest is fine.
-	// Once the encode is runAhead seconds past the room, the process is
-	// frozen (no CPU, no GPU); it thaws when the lead shrinks to resumeAt.
-	// Nothing happens for a video the room isn't showing.
-	var encodedNow atomic.Value
-	encodedNow.Store(completed)
-	paceDone := make(chan struct{})
-	exited := make(chan struct{}) // closed once ffmpeg has ended
-	go func() {
-		defer close(paceDone)
-		frozen := false
-		thaw := func() {
-			if frozen {
-				_ = resumeProcess(cmd.Process.Pid)
-				frozen = false
-				m.update(it.ID, func(s *Status) { s.Idle = false })
-			}
-		}
-		defer thaw()
-		t := time.NewTicker(time.Second)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-exited:
-				return
-			case <-t.C:
-			}
-			if m.Playhead == nil {
-				continue
-			}
-			id, pos, _ := m.Playhead()
-			if id != it.ID {
-				thaw()
-				continue
-			}
-			lead := encodedNow.Load().(float64) - pos
-			switch {
-			case !frozen && lead > m.runAhead:
-				if suspendProcess(cmd.Process.Pid) == nil {
-					frozen = true
-					m.update(it.ID, func(s *Status) { s.Idle = true })
-				}
-			case frozen && lead < m.resumeAt:
-				thaw()
-			}
-		}
-	}()
-
 	master := filepath.Join(dir, "master.m3u8")
 	sc := bufio.NewScanner(stdout)
-	var lastEmit, lastDisk time.Time
-	encoded := completed // ffmpeg reports its own output time, which starts at the resume point
+	var lastEmit time.Time
 	for sc.Scan() {
 		k, v, ok := strings.Cut(sc.Text(), "=")
 		if !ok {
@@ -484,27 +350,11 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 			if err != nil || us < 0 {
 				continue
 			}
-			sec := completed + float64(us)/1e6
-			encoded = sec
-			encodedNow.Store(sec)
-			// Playable once a safe lead exists: nobody should ever reach the
-			// encoder's edge, where players would wait for the next segment
-			// at different moments and drift apart.
-			playable := sec >= minf(playableLead, info.Duration-0.5) && fileExists(master)
+			sec := float64(us) / 1e6
+			playable := sec >= minf(12, info.Duration-0.5) && fileExists(master)
 			if time.Since(lastEmit) > 700*time.Millisecond {
 				lastEmit = time.Now()
-				var disk int64 = -1
-				if time.Since(lastDisk) > 5*time.Second {
-					lastDisk = time.Now()
-					disk = dirSize(dir)
-				}
-				m.update(it.ID, func(s *Status) {
-					s.Encoded = sec
-					s.Playable = s.Playable || playable
-					if disk >= 0 {
-						s.Disk = disk
-					}
-				})
+				m.update(it.ID, func(s *Status) { s.Encoded = sec; s.Playable = s.Playable || playable })
 			}
 		case "speed":
 			f, _ := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(v), "x"), 64)
@@ -516,27 +366,7 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 		}
 	}
 	err = cmd.Wait()
-	close(exited)
-	<-paceDone
 	subs := <-subDone
-	if err != nil && ctx.Err() != nil {
-		// Stopped on purpose (shutdown, Cancel, another file's turn): keep
-		// the whole segments so the next run continues from there instead
-		// of encoding the film from the start again.
-		kept, perr := savePartial(dir, want, encoded)
-		if perr != nil {
-			_ = os.RemoveAll(dir)
-		}
-		var cp Status
-		m.update(it.ID, func(s *Status) { s.State, s.Playable, s.Encoded = StateIdle, false, kept; cp = *s })
-		if perr == nil {
-			// Named in the host's cache list, like a finished one.
-			if b, err := json.Marshal(cp); err == nil {
-				_ = os.WriteFile(filepath.Join(dir, "status.json"), b, 0o600)
-			}
-		}
-		return
-	}
 	if err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
@@ -548,7 +378,6 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	}
 	m.update(it.ID, func(s *Status) {
 		s.State, s.Playable, s.Encoded, s.Subs = StateReady, true, info.Duration, subs
-		s.Disk = dirSize(dir)
 	})
 	m.mu.Lock()
 	final := *m.statuses[it.ID]
@@ -556,7 +385,6 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	if b, err := json.Marshal(final); err == nil {
 		_ = os.WriteFile(filepath.Join(dir, "status.json"), b, 0o600)
 		_ = os.WriteFile(filepath.Join(dir, ".done"), nil, 0o600)
-		_ = os.Remove(filepath.Join(dir, partialFile))
 	}
 	if m.MaxCache > 0 {
 		cur := ""
@@ -575,7 +403,7 @@ func (m *Manager) extractSubs(ctx context.Context, dir string, it Item, info Inf
 	var out []SubTrack
 	args, keep := subtitleArgs(it.abs, info.Subs)
 	if len(keep) > 0 {
-		cmd := ffmpegCommand(ctx, m.ffmpeg, args...)
+		cmd := exec.CommandContext(ctx, m.ffmpeg, args...)
 		cmd.Dir = dir
 		if err := cmd.Run(); err != nil {
 			log.Printf("media: subtitles for %s: %v", it.RelPath, err)
@@ -624,7 +452,7 @@ func (m *Manager) extractSubs(ctx context.Context, dir string, it Item, info Inf
 }
 
 func (m *Manager) loadCachedLocked(it Item) (Status, bool) {
-	dir := filepath.Join(m.cache, m.key(it))
+	dir := filepath.Join(m.cache, cacheKey(it))
 	if !fileExists(filepath.Join(dir, ".done")) {
 		return Status{}, false
 	}
@@ -636,7 +464,7 @@ func (m *Manager) loadCachedLocked(it Item) (Status, bool) {
 	if json.Unmarshal(b, &st) != nil {
 		return Status{}, false
 	}
-	st.ID, st.Name, st.key = it.ID, it.Name, m.key(it)
+	st.ID, st.Name, st.key = it.ID, it.Name, cacheKey(it)
 	m.statuses[it.ID] = &st
 	touch(dir)
 	return st, true
@@ -693,11 +521,6 @@ func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
 }
-
-// playableLead is how many seconds must be prepared before playback may
-// start. The encoder is many times faster than playback, so the lead only
-// grows from there.
-const playableLead = 45
 
 func minf(a, b float64) float64 {
 	if a < b {
