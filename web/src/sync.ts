@@ -21,7 +21,7 @@ import type { RoomState } from './store'
 const TICK = 250
 const HARD = 1.5
 const MAX_NUDGE = 0.05
-const STALL_MS = 6000
+const STALL_MS = 8000
 const NUDGE_MAX_MS = 8000
 const MAX_SEEK_COST = 1.0
 
@@ -53,6 +53,7 @@ export class SyncEngine {
   private stallSince = 0
   private stallCount = 0
   private lastTime = -1
+  private hasPlayed = false
 
   constructor(
     private video: HTMLVideoElement,
@@ -61,6 +62,7 @@ export class SyncEngine {
     private duration: () => number,
   ) {
     video.addEventListener('playing', this.onPlaying)
+    video.addEventListener('loadstart', this.onLoadStart)
   }
 
   start() {
@@ -77,6 +79,7 @@ export class SyncEngine {
   destroy() {
     this.stop()
     this.video.removeEventListener('playing', this.onPlaying)
+    this.video.removeEventListener('loadstart', this.onLoadStart)
   }
 
   /** True when the last pause/play/seek on the element came from us. */
@@ -219,15 +222,20 @@ export class SyncEngine {
     this.onBlocked(true)
   }
 
-  // Progress check, independent of drift: the room is playing, we follow it,
-  // and the playhead hasn't moved for STALL_MS.
+  // Progress check, independent of drift: this element is supposed to be
+  // playing (the room plays, it is not paused, it has data, it has played
+  // at least once on this page) and yet the playhead hasn't moved for
+  // STALL_MS. Loading, seeking and the time before the first frame never
+  // count, so a slow start is left alone.
   private watchdog(s: RoomState | null) {
     const v = this.video
     const now = performance.now()
-    const active = !!s?.media && s.playing && this.clock.now() >= s.anchor && this.mode === 'follow' && !this.blocked && !document.hidden
+    const active =
+      !!s?.media && s.playing && this.clock.now() >= s.anchor && this.mode === 'follow' && !this.blocked && !document.hidden &&
+      this.hasPlayed && !v.paused && !v.seeking && v.readyState >= 3
     const moved = Math.abs(v.currentTime - this.lastTime) > 0.05
     this.lastTime = v.currentTime
-    if (!active || (moved && !v.paused && v.readyState >= 3)) {
+    if (!active || moved) {
       this.stallSince = 0
       if (moved) this.stallCount = 0
       return
@@ -255,7 +263,13 @@ export class SyncEngine {
 
   // Learn how long a seek takes to get playing again, so hard seeks land on
   // the room position instead of behind it.
+  private onLoadStart = () => {
+    this.hasPlayed = false
+    this.stallSince = 0
+  }
+
   private onPlaying = () => {
+    this.hasPlayed = true
     if (!this.seekAt) return
     const took = (performance.now() - this.seekAt) / 1000
     this.seekAt = 0
