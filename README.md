@@ -85,6 +85,8 @@ When the browser can play the original picture (most H.264 files), FairPlay stre
 | `balanced` (default): original + 720p | about 4.5–5 GB |
 | `full`: original + 720p + 480p | about 5.2–5.5 GB |
 
+On Linux with an Intel or AMD GPU, the smaller versions are encoded on the GPU (VAAPI) and preparing costs about half a CPU core. If the start-up banner says `Encoder CPU (libx264)` on such a machine, install the VAAPI driver it names and start again.
+
 Files the browser can't play as they are, such as HEVC, are encoded in full and usually end up about the same size as the source. The host console shows the real figure for each video.
 
 | OS | Where they are kept |

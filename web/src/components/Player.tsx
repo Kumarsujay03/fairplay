@@ -328,6 +328,11 @@ export function Player() {
     const hls = hlsRef.current
     if (!hls || !levels.length) return
     if (quality === 'auto') {
+      // Phones and tablets stop at 720p: it looks the same on a small screen
+      // and costs far less battery and data. Laptops and TVs go up to 1080p.
+      // Picking a quality by hand still allows anything.
+      const sd = hls.levels.reduce((best, l, i) => (l.width <= 1280 && (best < 0 || l.width > hls.levels[best].width) ? i : best), -1)
+      hls.autoLevelCapping = touch && sd >= 0 ? sd : -1
       if (!hls.autoLevelEnabled) hls.currentLevel = -1
       return
     }

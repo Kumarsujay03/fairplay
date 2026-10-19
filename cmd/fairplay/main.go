@@ -279,7 +279,7 @@ func start(o options) {
 	opened := o.open && openBrowser(hostURL)
 	printBanner(bannerInfo{
 		hostURL: hostURL, opened: opened, root: mm.Root(), created: created, lan: lanURLs, fw: fw,
-		tunnel: o.tunnel, tunnelMissing: o.tunnel != "off" && tunnelBin == "", encoder: mm.EncoderName(),
+		tunnel: o.tunnel, tunnelMissing: o.tunnel != "off" && tunnelBin == "", encoder: mm.EncoderLabel(), encoderHint: mm.EncoderHint(),
 	})
 
 	<-ctx.Done()
@@ -295,6 +295,7 @@ func start(o options) {
 type bannerInfo struct {
 	fw                             firewall
 	hostURL, root, tunnel, encoder string
+	encoderHint                    string
 	lan                            []string
 	opened, created, tunnelMissing bool
 }
@@ -327,7 +328,11 @@ func printBanner(b bannerInfo) {
 	default:
 		fmt.Printf("  Internet   starting %s, the public link appears in the host console\n", b.tunnel)
 	}
-	fmt.Printf("  Encoder    %s\n\n", b.encoder)
+	fmt.Printf("  Encoder    %s\n", b.encoder)
+	if b.encoderHint != "" {
+		fmt.Printf("             %s\n", b.encoderHint)
+	}
+	fmt.Println()
 	fmt.Print("  Press Ctrl+C to stop. Stopping ends the room for everyone.\n\n")
 }
 
