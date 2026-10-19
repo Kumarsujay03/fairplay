@@ -29,6 +29,8 @@ export class SyncEngine {
   /** Autoplay with sound was refused, so playback started muted instead. */
   onMutedStart: () => void = () => {}
   onReport: (r: SyncReport) => void = () => {}
+  /** Corrections the engine makes, for the event log. */
+  onEvent: (ev: string, d: Record<string, unknown>) => void = () => {}
 
   private timer = 0
   private startTimer = 0
@@ -65,6 +67,11 @@ export class SyncEngine {
   /** True when the last pause/play/seek on the element came from us. */
   isOwnAction() {
     return performance.now() - this.ownAction < 400
+  }
+
+  /** The next pause/play/seek is ours (hls.js is about to rebuild the media source). */
+  markOwn() {
+    this.ownAction = performance.now()
   }
 
   /** Where the room is at this instant. */
@@ -116,12 +123,20 @@ export class SyncEngine {
       this.setRate(1)
       if (!v.paused) this.own(() => v.pause())
       if (Math.abs(drift) > 0.08 || force) {
-        if (Math.abs(v.currentTime - s.pos) > 0.04) this.seek(s.pos)
+        if (Math.abs(v.currentTime - s.pos) > 0.04) {
+          this.onEvent('hold', { from: v.currentTime, to: s.pos, scheduled })
+          this.seek(s.pos)
+        }
       }
       if (scheduled) {
         // Start exactly on the shared tick.
         clearTimeout(this.startTimer)
-        this.startTimer = window.setTimeout(() => this.play(), Math.max(0, s.anchor - this.clock.now()))
+        const inMs = Math.max(0, s.anchor - this.clock.now())
+        if (!this.startTimer) this.onEvent('scheduled', { inMs, pos: s.pos })
+        this.startTimer = window.setTimeout(() => {
+          this.startTimer = 0
+          this.play()
+        }, inMs)
       }
       return
     }
@@ -133,12 +148,18 @@ export class SyncEngine {
     const abs = Math.abs(drift)
     if (abs >= HARD) {
       this.setRate(1)
-      if (performance.now() - this.seekAt > 1000) this.seek(target + this.seekCost)
+      if (performance.now() - this.seekAt > 1000) {
+        this.onEvent('hardseek', { drift, target, seekCost: this.seekCost, rs: v.readyState, buffering })
+        this.seek(target + this.seekCost)
+      }
     } else if (abs > tol) {
       // Converge in roughly two seconds.
-      this.setRate(1 - Math.max(-MAX_NUDGE, Math.min(MAX_NUDGE, drift / 2)))
+      const rate = 1 - Math.max(-MAX_NUDGE, Math.min(MAX_NUDGE, drift / 2))
+      if (!this.nudging) this.onEvent('nudge', { drift, rate, tol })
+      this.setRate(rate)
       this.nudging = true
     } else if (this.nudging && abs < tol / 2) {
+      this.onEvent('nudge.end', { drift })
       this.setRate(1)
       this.nudging = false
     }
@@ -154,8 +175,12 @@ export class SyncEngine {
         // reload, for example). Keep in sync muted, and let the viewer unmute.
         v.muted = true
         v.play()
-          .then(() => this.onMutedStart())
+          .then(() => {
+            this.onEvent('mutedstart', {})
+            this.onMutedStart()
+          })
           .catch(() => {
+            this.onEvent('blocked', {})
             this.blocked = true
             this.onBlocked(true)
           })
@@ -184,5 +209,6 @@ export class SyncEngine {
     const took = (performance.now() - this.seekAt) / 1000
     this.seekAt = 0
     if (took > 0 && took < 5) this.seekCost = this.seekCost * 0.6 + took * 0.4
+    this.onEvent('seekdone', { took, seekCost: this.seekCost })
   }
 }

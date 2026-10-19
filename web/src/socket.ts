@@ -13,6 +13,7 @@ export class Socket {
   private pingTimer = 0
   private stopped = false
   private extra: Handler[] = []
+  private downSince = 0
 
   connect() {
     if (this.ws && this.ws.readyState <= WebSocket.OPEN) return
@@ -22,6 +23,9 @@ export class Socket {
     this.ws = ws
     ws.onopen = () => {
       if (this.ws !== ws) return
+      const down = this.downSince ? Date.now() - this.downSince : 0
+      this.downSince = 0
+      this.log('ws.open', { retry: this.retry, downMs: down, href: location.pathname })
       this.retry = 0
       S.connected.value = true
       this.clock.reset()
@@ -42,6 +46,7 @@ export class Socket {
     }
     ws.onclose = async () => {
       if (this.ws !== ws) return // a replaced socket must not touch the new one
+      if (!this.downSince) this.downSince = Date.now()
       S.connected.value = false
       clearInterval(this.pingTimer)
       if (this.stopped || S.kicked.value) return
@@ -100,6 +105,11 @@ export class Socket {
 
   send(m: object) {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(m))
+  }
+
+  /** Record an event in the host's event log (see `fairplay logs`). */
+  log(ev: string, d: Record<string, unknown> = {}) {
+    this.send({ t: 'log', ev, d })
   }
 
   private ping() {

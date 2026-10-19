@@ -5,7 +5,10 @@ import { Icon } from './Icons'
 import { DEFAULT_REACTIONS, colorFor, emojiChar, emojiURL, recentEmoji, rememberEmoji } from '../util'
 import { EmojiPicker } from './EmojiPicker'
 
-const IDLE_FADE_MS = 12000
+const IDLE_FADE_MS = 10000
+// Touchscreens fire a "mouse enter" on the first tap and never a "leave", and
+// keep the composer focused after a send, so neither may hold the chat open there.
+const touch = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches
 export const MAX_CHAT = 200 // characters; the server enforces the same limit
 const NEAR_BOTTOM = 24 // px from the bottom that still counts as "following" the chat
 
@@ -91,7 +94,7 @@ export function Chat({ compact = false, open = true }: { compact?: boolean; open
 
   const chatOn = you.value?.chat !== false
   const shown = chatOn ? msgs : []
-  const faded = !compact && idle && !hover && !focus && following
+  const faded = !compact && idle && (touch || (!hover && !focus)) && following
 
   if (!open && !compact) return null
 

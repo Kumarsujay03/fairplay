@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Kumarsujay03/fairplay/internal/eventlog"
 	"log"
 	"mime"
 	"net/http"
@@ -263,10 +264,12 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	}()
 	fail := func(err error) {
 		if ctx.Err() != nil {
+			eventlog.Log("encode.cancel", eventlog.Fields{"id": it.ID, "name": it.Name})
 			m.update(it.ID, func(s *Status) { s.State = StateIdle; s.Playable = false })
 			return
 		}
 		log.Printf("media: %s: %v", it.RelPath, err)
+		eventlog.Log("encode.error", eventlog.Fields{"id": it.ID, "name": it.Name, "error": err.Error()})
 		m.update(it.ID, func(s *Status) { s.State = StateError; s.Error = err.Error(); s.Playable = false })
 	}
 
@@ -283,6 +286,8 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	}
 
 	args, rungs, audio := buildArgs(it.abs, info, m.enc, m.tonemap)
+	eventlog.Log("encode.plan", eventlog.Fields{"id": it.ID, "name": it.Name, "encoder": m.enc.Name, "duration": info.Duration,
+		"width": info.Video.Width, "height": info.Video.Height, "codec": info.Video.Codec, "hdr": info.Video.HDR, "args": args})
 	var notes []string
 	if info.Video.HDR && !m.tonemap {
 		notes = append(notes, "HDR source: this ffmpeg has no tonemap filter, colours may look washed out")
@@ -335,6 +340,7 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 		return
 	}
 	lowerPriority(cmd.Process.Pid)
+	eventlog.Log("encode.start", eventlog.Fields{"id": it.ID, "pid": cmd.Process.Pid, "dir": dir})
 
 	master := filepath.Join(dir, "master.m3u8")
 	sc := bufio.NewScanner(stdout)
@@ -379,6 +385,7 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	m.update(it.ID, func(s *Status) {
 		s.State, s.Playable, s.Encoded, s.Subs = StateReady, true, info.Duration, subs
 	})
+	eventlog.Log("encode.done", eventlog.Fields{"id": it.ID, "name": it.Name})
 	m.mu.Lock()
 	final := *m.statuses[it.ID]
 	m.mu.Unlock()

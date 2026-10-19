@@ -17,6 +17,7 @@ import (
 
 	"github.com/Kumarsujay03/fairplay/internal/auth"
 	"github.com/Kumarsujay03/fairplay/internal/emoji"
+	"github.com/Kumarsujay03/fairplay/internal/eventlog"
 	"github.com/Kumarsujay03/fairplay/internal/hub"
 	"github.com/Kumarsujay03/fairplay/internal/media"
 )
@@ -560,7 +561,30 @@ func (s *Server) hls(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r) // guests only ever reach the file the room is showing
 		return
 	}
-	s.Media.ServeHLS(w, r, id, r.PathValue("file"))
+	file := r.PathValue("file")
+	start := time.Now()
+	cw := &countWriter{ResponseWriter: w, status: http.StatusOK}
+	s.Media.ServeHLS(cw, r, id, file)
+	eventlog.Log("hls", eventlog.Fields{"sid": sess.ID, "name": sess.Name, "role": string(sess.Role), "file": file,
+		"status": cw.status, "bytes": cw.n, "ms": time.Since(start).Milliseconds(), "range": r.Header.Get("Range")})
+}
+
+// countWriter records what an HLS response returned, for the event log.
+type countWriter struct {
+	http.ResponseWriter
+	status int
+	n      int64
+}
+
+func (c *countWriter) WriteHeader(code int) {
+	c.status = code
+	c.ResponseWriter.WriteHeader(code)
+}
+
+func (c *countWriter) Write(b []byte) (int, error) {
+	n, err := c.ResponseWriter.Write(b)
+	c.n += int64(n)
+	return n, err
 }
 
 // ---- helpers ----

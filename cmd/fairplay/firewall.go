@@ -84,11 +84,7 @@ func ufwBlocking() bool {
 func lanNets() []string {
 	seen := map[string]bool{}
 	var out []string
-	ifaces, _ := net.Interfaces()
-	for _, ifc := range ifaces {
-		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
-			continue
-		}
+	for _, ifc := range usableInterfaces() {
 		addrs, _ := ifc.Addrs()
 		for _, a := range addrs {
 			ipn, ok := a.(*net.IPNet)

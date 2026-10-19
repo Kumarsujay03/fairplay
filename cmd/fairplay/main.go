@@ -8,6 +8,7 @@
 package main
 
 import (
+	"sort"
 	"context"
 	"errors"
 	"flag"
@@ -18,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -25,6 +27,7 @@ import (
 
 	"github.com/Kumarsujay03/fairplay/internal/auth"
 	"github.com/Kumarsujay03/fairplay/internal/emoji"
+	"github.com/Kumarsujay03/fairplay/internal/eventlog"
 	"github.com/Kumarsujay03/fairplay/internal/hub"
 	"github.com/Kumarsujay03/fairplay/internal/media"
 	"github.com/Kumarsujay03/fairplay/internal/server"
@@ -89,6 +92,7 @@ Usage:
   fairplay cache          show how much space prepared videos use
   fairplay cache clear    delete prepared videos to free space
   fairplay stop           end the room and close FairPlay running in another terminal
+  fairplay logs           where the event logs are (what every viewer and the encoder did, second by second)
   fairplay version        print the version
 
 Common options:
@@ -126,6 +130,8 @@ func main() {
 		runCache(sub, parseFlags("fairplay cache", args))
 	case "stop", "quit":
 		runStop(parseFlags("fairplay stop", args))
+	case "logs", "log":
+		runLogs(parseFlags("fairplay logs", args))
 	case "version", "--version", "-version":
 		fmt.Println("fairplay", version)
 	case "help", "-h", "--help":
@@ -149,6 +155,12 @@ func start(o options) {
 		fail("cannot create the settings folder %s: %v", o.data, err)
 	}
 	saved := loadSettings(o.data)
+	// The event log runs for the whole showing; see `fairplay logs`.
+	if lg, err := eventlog.Open(filepath.Join(o.data, "logs")); err != nil {
+		log.Printf("event log: %v (continuing without it)", err)
+	} else {
+		defer lg.Close()
+	}
 
 	ffmpeg, ffprobe := findTool("ffmpeg", o.ffmpeg), findTool("ffprobe", o.ffprobe)
 	if ffmpeg == "" || ffprobe == "" {
@@ -169,6 +181,8 @@ func start(o options) {
 		fail("%v", err)
 	}
 	mm.MaxCache = int64(o.cacheMaxGB * 1e9)
+	eventlog.Log("start", eventlog.Fields{"version": version, "os": runtime.GOOS, "arch": runtime.GOARCH, "cpus": runtime.NumCPU(),
+		"encoder": mm.EncoderName(), "root": mm.Root(), "cache": o.cache, "port": o.port, "tunnel": o.tunnel})
 	h := hub.New(store, mm, hub.Settings{RoomName: o.name, AutoAdmit: o.autoAdmit, Reactions: true, MaxGuests: o.maxGuests, InterMinutes: o.interMinutes})
 	srv := server.New(store, h, mm, webui.FS())
 	mm.Current = h.CurrentMedia
@@ -220,6 +234,7 @@ func start(o options) {
 	srv.Firewall = func() any { return fw }
 	srv.Shutdown = func() {
 		log.Print("the host stopped FairPlay from the console")
+		eventlog.Log("host.shutdown", nil)
 		stop()
 	}
 	tunnelBin := ""
@@ -277,12 +292,13 @@ func start(o options) {
 	opened := o.open && openBrowser(hostURL)
 	printBanner(bannerInfo{
 		hostURL: hostURL, opened: opened, root: mm.Root(), created: created, lan: lanURLs, fw: fw,
-		tunnel: o.tunnel, tunnelMissing: o.tunnel != "off" && tunnelBin == "", encoder: mm.EncoderName(),
+		tunnel: o.tunnel, tunnelMissing: o.tunnel != "off" && tunnelBin == "", encoder: mm.EncoderName(), logPath: eventlog.Path(),
 	})
 
 	<-ctx.Done()
 	fmt.Println()
 	log.Print("stopping FairPlay, the room has ended")
+	eventlog.Log("stop", nil)
 	time.Sleep(400 * time.Millisecond) // let the hub say goodbye to every viewer
 	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -293,6 +309,7 @@ func start(o options) {
 type bannerInfo struct {
 	fw                             firewall
 	hostURL, root, tunnel, encoder string
+	logPath                        string
 	lan                            []string
 	opened, created, tunnelMissing bool
 }
@@ -325,27 +342,77 @@ func printBanner(b bannerInfo) {
 	default:
 		fmt.Printf("  Internet   starting %s, the public link appears in the host console\n", b.tunnel)
 	}
-	fmt.Printf("  Encoder    %s\n\n", b.encoder)
+	fmt.Printf("  Encoder    %s\n", b.encoder)
+	if b.logPath != "" {
+		fmt.Printf("  Log        %s (every event of the showing; fairplay logs)\n", tildePath(b.logPath))
+	}
+	fmt.Println()
 	fmt.Print("  Press Ctrl+C to stop. Stopping ends the room for everyone.\n\n")
 }
 
+// lanIPs lists the private IPv4 addresses guests on the same network can
+// reach, best first. VPN tunnels, Docker bridges and other virtual interfaces
+// are skipped: their addresses look private but lead nowhere for a phone on
+// the Wi-Fi, and one of them printed first turned the Wi-Fi link into a dead
+// link. Home Wi-Fi (192.168.x.x) sorts before hotspots and offices (10.x.x.x).
 func lanIPs() []string {
-	var out []string
-	ifaces, _ := net.Interfaces()
-	for _, ifc := range ifaces {
-		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
-			continue
-		}
+	type cand struct {
+		ip   string
+		rank int
+	}
+	var cs []cand
+	for _, ifc := range usableInterfaces() {
 		addrs, _ := ifc.Addrs()
 		for _, a := range addrs {
 			ipn, ok := a.(*net.IPNet)
 			if !ok || ipn.IP.To4() == nil || !ipn.IP.IsPrivate() {
 				continue
 			}
-			out = append(out, ipn.IP.String())
+			ip := ipn.IP.To4()
+			rank := 2
+			switch {
+			case ip[0] == 192 && ip[1] == 168:
+				rank = 0
+			case ip[0] == 10:
+				rank = 1
+			}
+			cs = append(cs, cand{ip.String(), rank})
 		}
 	}
+	sort.SliceStable(cs, func(i, j int) bool { return cs[i].rank < cs[j].rank })
+	var out []string
+	for _, c := range cs {
+		out = append(out, c.ip)
+	}
 	return out
+}
+
+// usableInterfaces returns the network interfaces that are up, not loopback,
+// not point-to-point (VPNs) and not named like a virtual adapter.
+func usableInterfaces() []net.Interface {
+	ifaces, _ := net.Interfaces()
+	var out []net.Interface
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 || ifc.Flags&net.FlagPointToPoint != 0 {
+			continue
+		}
+		if virtualInterface(ifc.Name) {
+			continue
+		}
+		out = append(out, ifc)
+	}
+	return out
+}
+
+var virtualPrefixes = []string{"tun", "tap", "wg", "utun", "ppp", "docker", "br-", "virbr", "veth", "vmnet", "vboxnet", "zt", "tailscale", "ipsec", "nordlynx", "proton", "wind", "lxc", "lxd", "cni", "flannel", "vEthernet", "Hyper-V", "VMware", "VirtualBox", "WireGuard", "OpenVPN", "TAP-", "Tailscale", "ZeroTier", "Windscribe"}
+
+func virtualInterface(name string) bool {
+	for _, p := range virtualPrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func isAddrInUse(err error) bool {
