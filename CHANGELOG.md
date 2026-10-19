@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.4 (2026-10-20)
 
+- The host console is restructured around what the host actually does. **Now showing** holds the film, its tracks for everyone and the transport that moves the global timer, in one card. **Library** keeps the folder, search, list and queue. **People** merges invites and viewers into one list, one row per person with status, ping and quality, and a row menu for the link, QR code, chat, control and removal, so nobody appears twice. **Settings** gathers sharing, the room options and storage (folded away) in one card. The top bar carries one status pill, Open player, and a ⋯ menu with Stop FairPlay and End room, so destructive actions are out of the way. One accent for the primary action, green only for "live", red only on hover of destructive items
 - When the chat is quiet and a message arrives, only the new bubble appears, not the last few; the earlier ones come back when the controls are up or the pointer is in the chat corner
 
 ## 0.3.3 (2026-10-20)

@@ -307,3 +307,81 @@ video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-family: var(--fo
 }
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes pop-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } }
+
+/* ---------- Host console: one calm hierarchy ----------
+   One accent (amber) for the primary action, green only for "live", red only
+   on hover of destructive actions. Secondary actions are quiet text buttons,
+   card titles are small and even, and row actions appear when the row is
+   pointed at (always, on touchscreens). */
+.console-top { gap: 12px; padding: 14px 40px; }
+.console-top .brand { gap: 12px; }
+.console-top .logo-text { font-size: 18px; }
+.console-name { color: var(--text-2); font-size: 14px; }
+.console-top .tag { font-size: 11px; }
+.status-pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; font-size: 13px; line-height: 18px; font-weight: 500; color: var(--text-2); background: var(--bg-surface); border: 1px solid var(--border); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.status-pill .dot { width: 7px; height: 7px; border-radius: 999px; background: var(--text-3); }
+.status-pill.live { color: var(--live); border-color: rgba(46, 213, 115, 0.35); }
+.status-pill.live .dot { background: var(--live); box-shadow: 0 0 0 3px rgba(46, 213, 115, 0.15); }
+.status-pill.paused { color: var(--amber); border-color: rgba(245, 185, 66, 0.35); }
+.status-pill.paused .dot { background: var(--amber); }
+.btn-quiet { background: transparent; border: 1px solid transparent; color: var(--text-2); }
+.btn-quiet:hover:not(:disabled) { background: rgba(255, 255, 255, 0.06); color: var(--text); }
+.console-top .btn-quiet:hover:not(:disabled) { color: var(--danger); background: rgba(255, 92, 92, 0.08); }
+.btn-danger { background: rgba(255, 92, 92, 0.08); border: 1px solid transparent; color: var(--danger); }
+.btn-danger:hover:not(:disabled) { background: rgba(255, 92, 92, 0.16); }
+.console .btn-ghost { background: transparent; }
+.console .card { padding: 20px 22px; gap: 14px; border-radius: 14px; border-color: #1f2533; }
+.console .card .h18 { font-size: 15px; line-height: 20px; font-weight: 600; letter-spacing: 0.01em; }
+.console .card-head { min-height: 32px; }
+.console .card-head .count { font: 500 12px/18px var(--mono); color: var(--text-3); padding: 1px 8px; border-radius: 999px; background: var(--bg-elevated); }
+.console .tag { font-size: 11px; line-height: 16px; letter-spacing: 0.01em; }
+.console .tag.neutral { background: transparent; border: 1px solid var(--border); color: var(--text-3); }
+.console .label.dim { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; }
+.console .input { background: var(--bg-canvas); }
+.console-grid { gap: 20px; padding: 24px 40px 64px; }
+.gap24 { gap: 20px; }
+.thumb { width: 96px; height: 54px; border-radius: 8px; }
+.library { border-radius: 12px; padding: 0 6px; }
+.library .lib-row + .lib-row, .divider-list > * + * { border-top-color: #1a2030; }
+.peer-row, .invite-row, .queue-row, .lib-row { padding: 10px 8px; gap: 12px; border-radius: 10px; }
+.lib-row:hover, .peer-row:hover, .invite-row:hover { background: rgba(255, 255, 255, 0.025); }
+.peer-row .actions { opacity: 0; transition: opacity 0.15s; }
+.peer-row:hover .actions, .peer-row:focus-within .actions { opacity: 1; }
+@media (hover: none) { .peer-row .actions { opacity: 1; } }
+.icon-btn.sm.plain.danger { color: var(--text-3); }
+.icon-btn.sm.plain.danger:hover { color: var(--danger); background: rgba(255, 92, 92, 0.1); }
+.console .big-play.sm { width: 48px; height: 48px; }
+.console .icon-btn { background: transparent; border: 1px solid var(--border); }
+.console .icon-btn:hover { background: rgba(255, 255, 255, 0.06); }
+.console .icon-btn.sm.plain, .console .icon-btn.plain { border: 0; }
+.console .caption.muted { color: var(--text-3); }
+@media (max-width: 960px) { .console-top { padding: 12px 16px; } .console-grid { padding: 16px; gap: 16px; } }
+
+/* Console layout pieces */
+.menu-wrap { position: relative; flex: none; }
+.dropdown { position: absolute; right: 0; top: calc(100% + 6px); min-width: 240px; padding: 6px; border-radius: 12px; background: var(--bg-elevated); border: 1px solid var(--border); box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5); z-index: 30; display: flex; flex-direction: column; animation: pop-in 0.12s ease-out; }
+.dropdown-item { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; padding: 8px 10px; border-radius: 8px; text-align: left; font-size: 14px; line-height: 20px; color: var(--text); }
+.dropdown-item:hover { background: rgba(255, 255, 255, 0.06); }
+.dropdown-item.danger { color: var(--danger); }
+.dropdown-item.danger:hover { background: rgba(255, 92, 92, 0.1); }
+.dropdown-item .caption { white-space: normal; }
+.console .empty { padding: 28px 16px; border: 1px dashed var(--border); border-radius: 12px; color: var(--text-3); text-align: center; font-size: 14px; }
+.show-card .transport { padding-top: 4px; border-top: 1px solid #1a2030; gap: 10px; }
+.show-card .room-tracks { padding-top: 0; }
+.folder-path { max-width: 260px; }
+.person-row { display: flex; align-items: center; gap: 12px; padding: 10px 8px; border-radius: 10px; }
+.person-row:hover { background: rgba(255, 255, 255, 0.025); }
+.person-row .menu-wrap .icon-btn { opacity: 0.55; }
+.person-row:hover .menu-wrap .icon-btn, .person-row .menu-wrap .icon-btn.active { opacity: 1; }
+.invite-form .select { flex: none; }
+.console .settings-card { gap: 0; padding: 6px 22px; }
+.settings-section { padding: 16px 0; }
+.settings-section + .settings-section { border-top: 1px solid #1a2030; }
+.section-title { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--text); letter-spacing: 0.01em; }
+details.settings-section > summary { list-style: none; cursor: pointer; }
+details.settings-section > summary::-webkit-details-marker { display: none; }
+details.settings-section .chev { transition: transform 0.15s; }
+details.settings-section[open] .chev { transform: rotate(180deg); }
+details.settings-section .section-body { padding-top: 12px; gap: 12px; }
+.lobby-card { border-color: rgba(245, 185, 66, 0.4); }
+@keyframes pop-in { from { opacity: 0; transform: translateY(-4px); } }

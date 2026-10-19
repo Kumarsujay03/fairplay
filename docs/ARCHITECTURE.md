@@ -39,7 +39,7 @@ FairPlay is a single binary you run on your own computer. It serves a small web 
 - A viewer list showing each name, status (live, solo, buffering, syncing) and ping. You can rename yourself there.
 
 **Host**
-- A host console with the file library, transcode progress, how far the encoder is ahead of the room, invites, the lobby, room settings, tunnel status, room-wide ping and an upload estimate.
+- A host console in four cards: Now showing (the film, its tracks for everyone, transcode progress and how far the encoder is ahead, and the transport that moves the global timer), Library (folder, search, list, queue), People (invites and viewers in one list, with a row menu for link, QR code, chat, control and removal) and Settings (tunnel status, room-wide ping and upload estimate, room options, storage). Stop FairPlay and End room sit in the top bar's ⋯ menu.
 - Grant or revoke co-host control per viewer. Co-hosts can play, pause, seek and start intermissions.
 - Hide or show chat for a specific viewer. A hidden viewer receives no chat messages and cannot post, but can still react. This is tied to their invite, so it sticks across reconnects.
 - Kick, revoke an invite, lock the room, or end the room and revoke every link.
