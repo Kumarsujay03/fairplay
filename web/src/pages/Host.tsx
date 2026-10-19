@@ -190,6 +190,10 @@ function Console() {
     setTimeout(() => socket.close(), 100)
   }
 
+  const [tab, setTab] = useState<'show' | 'people' | 'settings'>('show')
+  const lobby = S.lobby.value.length
+  const tunnel = S.tunnel.value
+
   return (
     <div class="console">
       <header class="console-top">
@@ -198,6 +202,14 @@ function Console() {
           <span class="console-name">Host console</span>
           <VersionTag version={version} upd={upd} />
         </div>
+        <nav class="tabs" aria-label="Console sections">
+          {(['show', 'people', 'settings'] as const).map((t) => (
+            <button key={t} class={`tab ${tab === t ? 'on' : ''}`} onClick={() => setTab(t)}>
+              {t === 'show' ? 'Show' : t === 'people' ? 'People' : 'Settings'}
+              {t === 'people' && lobby > 0 && <span class="tab-dot" title={`${lobby} waiting to join`} />}
+            </button>
+          ))}
+        </nav>
         <span class="grow" />
         <span class={`status-pill ${statusLive ? 'live' : st?.media ? 'paused' : 'idle'}`} title="Host verified on this computer">
           <span class="dot" />
@@ -215,41 +227,57 @@ function Console() {
         />
       </header>
 
-      <main class="console-grid">
-        <section class="col gap24">
-          <ShowCard cur={cur} pos={pos} />
-          <Library
-            cur={cur}
-            items={items}
-            root={root}
-            onRefresh={refreshLibrary}
-            onFolder={(r) => {
-              setItems(r.items || [])
-              setRoot(r.root)
-              S.library.value = { ...r.status, ...S.library.value }
-            }}
-          />
-        </section>
-        <section class="col gap24">
-          {S.lobby.value.length > 0 && (
-            <div class="card lobby-card">
-              <div class="card-head">
-                <div class="h18">Waiting to join</div>
-                <span class="count">{S.lobby.value.length}</span>
-              </div>
-              {S.lobby.value.map((p) => (
-                <LobbyEntry key={p.id} p={p} />
-              ))}
+      <main class="console-body">
+        {tab === 'show' && (
+          <>
+            <Banner cur={cur} pos={pos} />
+            <div class="console-cols">
+              <Library
+                cur={cur}
+                items={items}
+                root={root}
+                onRefresh={refreshLibrary}
+                onFolder={(r) => {
+                  setItems(r.items || [])
+                  setRoot(r.root)
+                  S.library.value = { ...r.status, ...S.library.value }
+                }}
+              />
+              <People tokens={tokens} setTokens={setTokens} compact onMore={() => setTab('people')} />
+              <RoomSettings onShare={() => setTab('settings')} />
             </div>
-          )}
-          <People tokens={tokens} setTokens={setTokens} />
-          <div class="card settings-card">
-            <Share guests={guests.length} />
-            <RoomSettings />
-            <Storage />
+          </>
+        )}
+        {tab === 'people' && (
+          <div class="console-cols two">
+            <People tokens={tokens} setTokens={setTokens} />
+            <div class="card settings-card">
+              <Share guests={guests.length} />
+            </div>
           </div>
-        </section>
+        )}
+        {tab === 'settings' && (
+          <div class="console-cols two">
+            <div class="card settings-card">
+              <Share guests={guests.length} />
+              <RoomSettings />
+            </div>
+            <div class="card settings-card">
+              <Storage />
+            </div>
+          </div>
+        )}
       </main>
+
+      <footer class="console-foot">
+        <span>Event log on this computer</span>
+        {S.media.value?.encoder && <span>Encoder {S.media.value.encoder}</span>}
+        {(tunnel?.lan?.length || 0) > 0 && <span>Wi-Fi {tunnel!.lan![0].replace(/^https?:\/\//, '')}</span>}
+        <span>Internet {tunnel?.state === 'up' ? 'on' : tunnel?.state === 'starting' ? 'starting…' : 'off'}</span>
+        <span class="grow" />
+        <button class="link-quiet" onClick={stopFairPlay}>Stop FairPlay</button>
+        <span>{version}</span>
+      </footer>
     </div>
   )
 }
@@ -296,28 +324,61 @@ function RowMenu({ items, label = 'Actions' }: { items: { label: string; hint?: 
   )
 }
 
-/** The film the room is showing, its tracks, and the transport that moves the
- * global timer for everyone. The host's main job, in one card. */
-function ShowCard({ cur, pos }: { cur: S.MediaStatus | null; pos: number }) {
+/** The film the room is showing, as a cinematic banner: title and tracks on
+ * the picture, the transport that moves the global timer docked at its foot. */
+function Banner({ cur, pos }: { cur: S.MediaStatus | null; pos: number }) {
   const lib = S.library.value
-  const curLive = cur ? lib[cur.id] || cur : null
+  const m = cur ? lib[cur.id] || cur : null
+  const pct = m && m.duration ? Math.min(100, (m.encoded / m.duration) * 100) : 0
   return (
-    <div class="card show-card">
-      <div class="card-head">
-        <div class="h18">Now showing</div>
-        {cur && (
-          <button
-            class="btn btn-quiet btn-sm"
-            title="Stop the video for everyone and stop preparing it"
-            onClick={() => confirm(`Stop “${cur.name}” for everyone?`) && socket.send({ t: 'host', op: 'clear' })}
-          >
-            Stop &amp; clear
-          </button>
+    <section class={`banner ${m ? '' : 'empty'}`}>
+      <div class="banner-scrim" />
+      <div class="banner-body">
+        {m ? (
+          <>
+            <div class="banner-head">
+              <div class="col tight grow">
+                <span class="eyebrow">Now showing</span>
+                <h1 class="banner-title ellipsis">{m.name}</h1>
+                <div class="row wrap caption banner-meta">
+                  <span class="dim">
+                    {fmtTime(m.duration)}
+                    {m.width ? ` · ${m.width}×${m.height}` : ''}
+                  </span>
+                  {m.state === 'ready' && <span class="tag ok"><Icon name="check" size={12} /> Ready</span>}
+                  {m.state === 'encoding' && <span class="tag warn">Preparing {pct.toFixed(0)}% · {m.speed?.toFixed(1)}×</span>}
+                  {m.state === 'probing' && <span class="tag neutral">Reading file…</span>}
+                  {m.state === 'error' && <span class="tag bad">Error</span>}
+                  {m.playable && m.state !== 'ready' && <span class="tag ok">Playable now</span>}
+                  {m.rungs && m.rungs.length > 0 && <span class="tag glass">{m.rungs.join(' · ')}</span>}
+                  {(m.audio?.length || 0) > 1 && <span class="tag glass">{m.audio!.map((a) => a.label).slice(0, 3).join(' · ')}</span>}
+                  {(m.subs?.length || 0) > 0 && <span class="tag glass">{m.subs!.length} subtitles</span>}
+                </div>
+                {m.state === 'encoding' && <EncoderLead m={m} />}
+                {m.error && <div class="caption warn-text">{m.error}</div>}
+              </div>
+              <div class="row wrap banner-actions">
+                {m.playable && S.media.value?.id === m.id && <RoomTracks m={m} glass />}
+                <button
+                  class="btn btn-glass btn-sm"
+                  title="Stop the video for everyone and stop preparing it"
+                  onClick={() => confirm(`Stop “${m.name}” for everyone?`) && socket.send({ t: 'host', op: 'clear' })}
+                >
+                  Stop &amp; clear
+                </button>
+              </div>
+            </div>
+            <Playback pos={pos} />
+          </>
+        ) : (
+          <div class="banner-empty">
+            <span class="eyebrow">Now showing</span>
+            <h1 class="banner-title">Nothing yet</h1>
+            <p class="dim">Pick a video from the library below. It starts preparing right away, and the room can start after a few seconds.</p>
+          </div>
         )}
       </div>
-      {curLive ? <MediaSummary m={curLive} /> : <div class="empty">Nothing is showing. Pick a video from the library below; it starts preparing right away.</div>}
-      {curLive && <Playback pos={pos} />}
-    </div>
+    </section>
   )
 }
 
@@ -447,11 +508,8 @@ function Library({
       <div class="card-head">
         <div class="h18">Library</div>
         <div class="row">
-          <span class="mono caption muted ellipsis folder-path" title={root}>
-            {root || '…'}
-          </span>
           {!picking && (
-            <button class="btn btn-quiet btn-sm" onClick={() => setPicking(true)}>
+            <button class="btn btn-quiet btn-sm" onClick={() => setPicking(true)} title={root}>
               Change folder
             </button>
           )}
@@ -519,22 +577,17 @@ function Library({
                     {s?.state === 'encoding' && ` · encoding ${s.duration ? Math.round((s.encoded / s.duration) * 100) : 0}%`}
                   </span>
                 </div>
-                {queuedAt(it.id) >= 0 ? (
-                  <button
-                    class="btn btn-sm btn-ghost queued"
-                    title="Remove from the queue"
-                    onClick={() => socket.send({ t: 'host', op: 'queue_remove', index: queuedAt(it.id) })}
-                  >
-                    Queued ✓ <span class="muted">· remove</span>
-                  </button>
-                ) : (
-                  <button class="btn btn-sm btn-quiet" onClick={() => socket.send({ t: 'host', op: 'queue_add', media: it.id })}>
-                    Queue
-                  </button>
-                )}
-                <button class="btn btn-sm btn-primary" onClick={() => socket.send({ t: 'host', op: 'load', media: it.id })}>
-                  Play
+                {queuedAt(it.id) >= 0 && <span class="tag warn">queued</span>}
+                <button class="icon-btn sm play-now" onClick={() => socket.send({ t: 'host', op: 'load', media: it.id })} title="Show this now" aria-label="Show this now">
+                  <Icon name="play" size={16} />
                 </button>
+                <RowMenu
+                  items={
+                    queuedAt(it.id) >= 0
+                      ? [{ label: 'Remove from queue', onClick: () => socket.send({ t: 'host', op: 'queue_remove', index: queuedAt(it.id) }) }]
+                      : [{ label: 'Add to queue', hint: 'Plays after the current film', onClick: () => socket.send({ t: 'host', op: 'queue_add', media: it.id }) }]
+                  }
+                />
               </div>
             )
           })}
@@ -544,56 +597,16 @@ function Library({
   )
 }
 
-function MediaSummary({ m }: { m: S.MediaStatus }) {
-  const pct = m.duration ? Math.min(100, (m.encoded / m.duration) * 100) : 0
-  return (
-    <div class="col">
-      <div class="row">
-        <div class="thumb" />
-        <div class="grow col tight">
-          <div class="h18 ellipsis">{m.name}</div>
-          <div class="caption dim">
-            {fmtTime(m.duration)}
-            {m.width ? ` · ${m.width}×${m.height}` : ''}
-            {m.encoder ? ` · ${m.encoder}` : ''}
-          </div>
-          <div class="row wrap">
-            {m.state === 'ready' && <span class="tag ok"><Icon name="check" size={12} /> Ready</span>}
-            {m.state === 'encoding' && <span class="tag warn">Encoding {pct.toFixed(0)}% · {m.speed?.toFixed(1)}×</span>}
-            {m.state === 'probing' && <span class="tag neutral">Reading file…</span>}
-            {m.state === 'error' && <span class="tag bad">Error</span>}
-            {m.playable && m.state !== 'ready' && <span class="tag ok">Playable now</span>}
-            {m.rungs?.map((r) => <span key={r} class="tag neutral">{r}</span>)}
-            {(m.audio?.length || 0) > 1 && <span class="tag neutral">{m.audio!.length} audio tracks</span>}
-            {(m.subs?.length || 0) > 0 && <span class="tag neutral">{m.subs!.length} subtitles</span>}
-          </div>
-        </div>
-      </div>
-      {m.state === 'encoding' && (
-        <>
-          <div class="progress">
-            <div style={{ width: `${pct}%` }} />
-          </div>
-          <EncoderLead m={m} />
-        </>
-      )}
-      {m.playable && S.media.value?.id === m.id && <RoomTracks m={m} />}
-      {m.error && <div class="caption warn-text">{m.error}</div>}
-      {m.notes?.map((n) => <div class="caption muted" key={n}>{n}</div>)}
-    </div>
-  )
-}
-
 /** The host's choice of audio, subtitles and quality for everyone. Viewers
  * follow it unless they pick their own in the player menu. */
-function RoomTracks({ m }: { m: S.MediaStatus }) {
+function RoomTracks({ m, glass = false }: { m: S.MediaStatus; glass?: boolean }) {
   const p = S.prefs.value
   const set = (patch: Partial<S.TrackPrefs>) => socket.send({ t: 'host', op: 'prefs', prefs: { ...p, ...patch } })
   const audio = m.audio || []
   const subs = m.subs || []
   return (
-    <div class="room-tracks">
-      <div class="label dim">Picture and sound for everyone</div>
+    <div class={`room-tracks ${glass ? 'glass' : ''}`}>
+      {!glass && <div class="label dim">Picture and sound for everyone</div>}
       <div class="row wrap">
         {audio.length > 1 && (
           <label class="track-pick">
@@ -631,7 +644,7 @@ function RoomTracks({ m }: { m: S.MediaStatus }) {
           </select>
         </label>
       </div>
-      <div class="caption muted">Viewers start with these and can change them for their own screen. Only you control play, pause and intermission.</div>
+      {!glass && <div class="caption muted">Viewers start with these and can change them for their own screen. Only you control play, pause and intermission.</div>}
     </div>
   )
 }
@@ -667,12 +680,12 @@ function IntermissionStart({ disabled, onStart }: { disabled: boolean; onStart: 
   }
   return (
     <div class="row inter-start">
-      <button class="btn btn-ghost" onClick={() => onStart(commit(min))} disabled={disabled}>
+      <button class="btn btn-glass btn-sm" onClick={() => onStart(commit(min))} disabled={disabled}>
         Intermission
       </button>
       <label class="row inter-len" title="Intermission length in minutes, 1 to 120">
         <input
-          class="input num"
+          class="input num glass"
           type="number"
           min={1}
           max={120}
@@ -694,8 +707,18 @@ function Playback({ pos }: { pos: number }) {
   const send = (op: string, extra: object = {}) => socket.send({ t: 'cmd', op, ...extra })
   return (
     <div class="transport col">
+      <input
+        type="range"
+        class="range-wide"
+        min={0}
+        max={dur || 1}
+        step={1}
+        value={pos}
+        onChange={(e) => send('seek', { pos: parseFloat((e.target as HTMLInputElement).value) })}
+        aria-label="Seek for everyone"
+      />
       <div class="row wrap">
-        <button class="icon-btn" onClick={() => send('seek', { pos: pos - 10 })} title="Back 10s for everyone">
+        <button class="icon-btn glass" onClick={() => send('seek', { pos: pos - 10 })} title="Back 10s for everyone">
           <Icon name="back10" />
         </button>
         <button
@@ -707,7 +730,7 @@ function Playback({ pos }: { pos: number }) {
         >
           <Icon name={st?.playing ? 'pause' : 'play'} size={22} />
         </button>
-        <button class="icon-btn" onClick={() => send('seek', { pos: pos + 10 })} title="Forward 10s for everyone">
+        <button class="icon-btn glass" onClick={() => send('seek', { pos: pos + 10 })} title="Forward 10s for everyone">
           <Icon name="fwd10" />
         </button>
         <span class="mono">
@@ -715,30 +738,17 @@ function Playback({ pos }: { pos: number }) {
         </span>
         <span class="grow" />
         {st?.reason === 'intermission' ? (
-          <button class="btn btn-primary" onClick={() => send('inter_end')}>
+          <button class="btn btn-primary btn-sm" onClick={() => send('inter_end')}>
             End intermission
           </button>
         ) : (
           <>
             <IntermissionStart disabled={!m?.playable} onStart={(min) => send('inter', { sec: min * 60 })} />
-            <button class="btn btn-ghost" onClick={() => send('inter', { sec: 0 })} disabled={!m?.playable}>
+            <button class="btn btn-glass btn-sm" onClick={() => send('inter', { sec: 0 })} disabled={!m?.playable}>
               Pause for all
             </button>
           </>
         )}
-      </div>
-      <input
-        type="range"
-        class="range-wide"
-        min={0}
-        max={dur || 1}
-        step={1}
-        value={pos}
-        onChange={(e) => send('seek', { pos: parseFloat((e.target as HTMLInputElement).value) })}
-        aria-label="Seek for everyone"
-      />
-      <div class="caption muted">
-        Play, pause and seek here move the global timer for everyone. Guests who pause on their own stay behind until they tap “Back to live”.
       </div>
     </div>
   )
@@ -886,7 +896,7 @@ function Share({ guests }: { guests: number }) {
   )
 }
 
-function People({ tokens, setTokens }: { tokens: Record<string, string>; setTokens: (t: Record<string, string>) => void }) {
+function People({ tokens, setTokens, compact = false, onMore }: { tokens: Record<string, string>; setTokens: (t: Record<string, string>) => void; compact?: boolean; onMore?: () => void }) {
   const [label, setLabel] = useState('')
   const [hours, setHours] = useState(24)
   const t = S.tunnel.value
@@ -968,12 +978,29 @@ function People({ tokens, setTokens }: { tokens: Record<string, string>; setToke
             ? { t: 'Opened, waiting', c: 'warn' }
             : { t: 'Not opened yet', c: 'neutral' }
 
+  const shownRows = compact ? rows.slice(0, 4) : rows
+  const pending = S.lobby.value
   return (
     <div class="card">
       <div class="card-head">
-        <div class="h18">People</div>
-        <span class="count" title="Watching now">{watching}</span>
+        <div class="row">
+          <div class="h18">People</div>
+          <span class="tag ok">{watching} watching</span>
+        </div>
+        {compact && rows.length > shownRows.length && onMore && (
+          <button class="btn btn-quiet btn-sm" onClick={onMore}>
+            See all {rows.length}
+          </button>
+        )}
       </div>
+      {pending.length > 0 && (
+        <div class="col lobby-inline">
+          <div class="label dim">Waiting to join</div>
+          {pending.map((p) => (
+            <LobbyEntry key={p.id} p={p} />
+          ))}
+        </div>
+      )}
       <form class="row invite-form" onSubmit={create}>
         <input class="input grow" placeholder="Invite someone by name" value={label} maxLength={24} onInput={(e) => setLabel((e.target as HTMLInputElement).value)} />
         <select class="input select" value={hours} onChange={(e) => setHours(parseInt((e.target as HTMLSelectElement).value))} aria-label="Expires after">
@@ -988,7 +1015,7 @@ function People({ tokens, setTokens }: { tokens: Record<string, string>; setToke
       </form>
       <div class="divider-list">
         {rows.length === 0 && <div class="caption muted pad">No one yet. Invite someone above; the link is copied for you to send.</div>}
-        {rows.map(({ key, name, inv, peer }) => {
+        {shownRows.map(({ key, name, inv, peer }) => {
           const ps = peer ? peerStatus(peer) : null
           const status = ps ? { t: ps.text, c: ps.cls } : inv ? inviteStatus(inv) : { t: '', c: 'neutral' }
           const has = inv ? !!tokens[inv.id] : false
@@ -1037,14 +1064,16 @@ function People({ tokens, setTokens }: { tokens: Record<string, string>; setToke
         })}
       </div>
       {qrFor && <InviteQR label={qrFor.label} links={qrLinks(qrFor.id)} onClose={() => setQrFor(null)} />}
-      <div class="caption muted">
-        One link per person. It locks to the first device that opens it, and every first join waits for you in the lobby. Forwarded links show up flagged.
-      </div>
+      {!compact && (
+        <div class="caption muted">
+          One link per person. It locks to the first device that opens it, and every first join waits for you in the lobby. Forwarded links show up flagged.
+        </div>
+      )}
     </div>
   )
 }
 
-function RoomSettings() {
+function RoomSettings({ onShare }: { onShare?: () => void } = {}) {
   const s = S.hostSettings.value
   if (!s) return null
   const set = (patch: Partial<S.HostSettings>) => socket.send({ t: 'host', op: 'settings', settings: { ...s, ...patch } })
@@ -1055,8 +1084,15 @@ function RoomSettings() {
     ['reactions', 'Show reactions on screen', ''],
   ]
   return (
-    <div class="settings-section col">
-      <div class="section-title">Room</div>
+    <div class={onShare ? 'card' : 'settings-section col'}>
+      <div class="card-head">
+        <div class={onShare ? 'h18' : 'section-title'}>Room</div>
+        {onShare && (
+          <button class="btn btn-quiet btn-sm" onClick={onShare}>
+            Share links
+          </button>
+        )}
+      </div>
       <label class="col tight">
         <span class="label dim">Room name</span>
         <input class="input" defaultValue={s.roomName} maxLength={40} onChange={(e) => set({ roomName: (e.target as HTMLInputElement).value })} />
