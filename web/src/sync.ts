@@ -23,6 +23,7 @@ const HARD = 1.5
 const MAX_NUDGE = 0.05
 const STALL_MS = 6000
 const NUDGE_MAX_MS = 8000
+const MAX_SEEK_COST = 1.0
 
 export interface SyncReport {
   target: number
@@ -43,7 +44,7 @@ export class SyncEngine {
   private timer = 0
   private startTimer = 0
   private ownAction = 0 // timestamp of our last programmatic pause/play/seek
-  private seekCost = 0.25 // learned seconds a seek takes to resume
+  private seekCost = 0.25 // learned seconds a seek takes to resume, capped at MAX_SEEK_COST
   private seekAt = 0
   private nudging = false
   private nudgeSince = 0
@@ -153,7 +154,10 @@ export class SyncEngine {
       // Let a seek that is still loading finish instead of chasing the room
       // with a new one every second, which restarts the download each time.
       const wait = v.seeking || buffering ? 4000 : 1000
-      if (!this.seekAt || performance.now() - this.seekAt > wait) this.seek(target + this.seekCost)
+      // Aim ahead by the learned seek cost only when behind. When ahead the
+      // data is already here, the seek is quick, and aiming ahead again
+      // would land ahead again, in a loop that kept viewers 2-3 s early.
+      if (!this.seekAt || performance.now() - this.seekAt > wait) this.seek(drift < 0 ? target + this.seekCost : target + 0.1)
     } else if (abs > tol) {
       // Converge in roughly two seconds. A busy computer may not manage even
       // 5% faster; if it hasn't caught up after a while, jump instead.
@@ -163,7 +167,7 @@ export class SyncEngine {
       if (now - this.nudgeSince > NUDGE_MAX_MS && abs > 0.3 && !v.seeking) {
         this.setRate(1)
         this.nudging = false
-        this.seek(target + this.seekCost)
+        this.seek(drift < 0 ? target + this.seekCost : target + 0.1)
       } else {
         this.setRate(1 - Math.max(-MAX_NUDGE, Math.min(MAX_NUDGE, drift / 2)))
       }
@@ -255,6 +259,6 @@ export class SyncEngine {
     if (!this.seekAt) return
     const took = (performance.now() - this.seekAt) / 1000
     this.seekAt = 0
-    if (took > 0 && took < 5) this.seekCost = this.seekCost * 0.6 + took * 0.4
+    if (took > 0 && took < 5) this.seekCost = Math.min(MAX_SEEK_COST, this.seekCost * 0.6 + took * 0.4)
   }
 }

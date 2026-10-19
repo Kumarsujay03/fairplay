@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 (2026-10-19)
+
+- Fix: the picture could stay black for 10–15 seconds at the start with a "This computer is busy" message. The check that watches for a picture falling behind the sound was too eager: it also fired during the first seconds after a start or seek and when frames were decoded but not shown (a tab behind another window), and each time it switched quality and restarted the decoder. It now waits 10 seconds after any start or seek, needs the picture a full second behind for 4 seconds, ignores hidden or covered players, and only acts when the decoder itself has stopped
+- Fix: after a viewer paused, played again and was brought back to the room, they could end up 2–3 seconds ahead and stay there. A catch-up seek aimed ahead by the learned "seek cost" even when the viewer was already ahead, landing ahead again. It now aims ahead only when behind, and the learned cost is capped at one second
+- A media key or another tab starting to play can no longer pause the whole room when pressed on the host's computer; the host uses the on-screen button. Guests still go solo as before
+- The browser console names why a quality was lowered and why a pause was or wasn't taken as the viewer's
+
 ## 0.2.0 (2026-10-19)
 
 The way videos are prepared and streamed is rebuilt. Since 0.1.5 the original picture was copied instead of encoded, which kept the file's own keyframes: anywhere from one to ten seconds apart. That made the stream's pieces long and uneven, so each player waited for a different piece at the encoder's edge, seeks landed late, and two screens could drift up to twenty seconds apart while both clocks read "in sync". The pacing added in 0.1.8 made the edge even closer.

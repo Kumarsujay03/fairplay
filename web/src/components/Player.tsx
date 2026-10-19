@@ -48,6 +48,7 @@ export function Player() {
   const [showUi, setShowUi] = useState(true)
   const lastTouch = useRef(0)
   const lastGesture = useRef(0)
+  const canControlRef = useRef(false)
   const [isFs, setIsFs] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
   const [inPip, setInPip] = useState(false)
@@ -63,6 +64,7 @@ export function Player() {
   const m = S.media.value
   const me = S.you.value
   const canControl = !!me?.control
+  canControlRef.current = canControl
   const mode = S.mode.value
   const duration = m?.duration || 0
   const playable = !!m?.playable && m.id === st?.media
@@ -82,7 +84,7 @@ export function Player() {
       if (hls && bufferedAhead(v) > 2) {
         // The video is downloaded but the picture doesn't move: this computer
         // can't decode it fast enough.
-        lighten()
+        lighten('stalled with video buffered')
         return
       }
       if (hls && n <= 2) {
@@ -103,8 +105,12 @@ export function Player() {
       // in the background, a locked phone, a stalled stream); treating that
       // as the viewer's choice left them in solo mode, behind the room, when
       // they came back. The sync engine simply resumes those.
-      const fromUser = performance.now() - lastGesture.current < 1500
-      if (!e.isOwnAction() && !v.ended && fromUser && e.mode === 'follow' && S.room.value?.playing) userPause()
+      const age = performance.now() - lastGesture.current
+      const fromUser = age < 1500
+      if (!e.isOwnAction() && !v.ended && e.mode === 'follow' && S.room.value?.playing) {
+        console.warn('FairPlay: pause event,', fromUser ? `after a gesture ${Math.round(age)} ms ago` : 'not from the viewer, resuming')
+        if (fromUser) userPause()
+      }
     }
     const onGesture = () => (lastGesture.current = performance.now())
     for (const ev of ['pointerdown', 'keydown', 'touchstart']) document.addEventListener(ev, onGesture, true)
@@ -112,6 +118,13 @@ export function Player() {
     const ms = navigator.mediaSession
     try {
       ms?.setActionHandler('pause', () => {
+        // Browsers also send this when another tab starts playing. A guest
+        // simply goes solo; a host must use the on-screen button, so a
+        // media key or another tab can never pause the whole room.
+        if (canControlRef.current) {
+          S.showToast('Use the pause button on screen to pause for everyone')
+          return
+        }
         onGesture()
         v.pause()
       })
@@ -207,9 +220,14 @@ export function Player() {
   // ---- picture lag ----
   // The clock (driven by the sound) can be exactly on time while the picture
   // on screen is seconds behind it, when this computer can't decode the
-  // video fast enough (for example while it is also preparing the video).
-  // Watch which frame is actually shown, and when the picture falls behind,
-  // switch to a lighter quality and restart the decoder at the right spot.
+  // video fast enough. Watch the frame actually shown and, when the picture
+  // stays behind, switch to a lighter quality and restart the decoder.
+  //
+  // Only decoding trouble counts. Frames that are decoded but never shown
+  // (a hidden tab, a window behind another, a screen that isn't repainting)
+  // are the browser saving work, not a slow computer, and the first seconds
+  // after a start or a seek are always slow. Acting on those made the
+  // picture go black at the start while qualities switched back and forth.
   useEffect(() => {
     const v = videoRef.current as HTMLVideoElement & {
       requestVideoFrameCallback?: (cb: (now: number, meta: { mediaTime: number }) => void) => number
@@ -219,14 +237,22 @@ export function Player() {
     let id = 0
     let behindSince = 0
     let lastFrame = performance.now()
+    let settledAt = performance.now() + 10_000 // no judgement before this
+    let lastDecoded = -1
+    let visible = true
+    const settle = () => (settledAt = performance.now() + 10_000)
+    for (const ev of ['loadstart', 'seeking', 'play', 'playing', 'ratechange']) v.addEventListener(ev, settle)
+    const io = 'IntersectionObserver' in window ? new IntersectionObserver((es) => (visible = es.some((e) => e.isIntersecting))) : null
+    io?.observe(v)
     const onFrame = (_now: number, meta: { mediaTime: number }) => {
       lastFrame = performance.now()
       const lag = v.currentTime - meta.mediaTime
-      if (!v.paused && !v.seeking && lag > 0.6) {
+      if (!v.paused && !v.seeking && lag > 1.0 && lastFrame > settledAt) {
         if (!behindSince) behindSince = lastFrame
-        else if (lastFrame - behindSince > 2500) {
+        else if (lastFrame - behindSince > 4000) {
           behindSince = 0
-          lighten()
+          settle()
+          lighten('picture ' + lag.toFixed(1) + ' s behind the sound')
         }
       } else {
         behindSince = 0
@@ -234,23 +260,34 @@ export function Player() {
       id = v.requestVideoFrameCallback!(onFrame)
     }
     id = v.requestVideoFrameCallback(onFrame)
-    // No new frame at all for a while, although the clock runs: same cure.
+    // No frame shown for a while although the clock runs and the decoder is
+    // not producing any either: same cure. A decoder that is producing frames
+    // nobody shows is left alone.
     const timer = setInterval(() => {
-      if (!v.paused && !v.seeking && v.readyState >= 3 && performance.now() - lastFrame > 3000) {
-        lastFrame = performance.now()
-        lighten()
+      const now = performance.now()
+      const decoded = v.getVideoPlaybackQuality?.().totalVideoFrames ?? -1
+      const decoding = decoded !== lastDecoded
+      lastDecoded = decoded
+      if (!visible || document.hidden || v.paused || v.seeking || v.readyState < 3 || now < settledAt) return
+      if (now - lastFrame > 6000 && !decoding) {
+        lastFrame = now
+        settle()
+        lighten('no new frame for 6 s')
       }
     }, 1000)
     return () => {
       v.cancelVideoFrameCallback?.(id)
       clearInterval(timer)
+      io?.disconnect()
+      for (const ev of ['loadstart', 'seeking', 'play', 'playing', 'ratechange']) v.removeEventListener(ev, settle)
     }
   }, [])
 
   /** One quality lighter (for this viewer only), and a fresh decoder. */
-  function lighten() {
+  function lighten(why: string) {
     const v = videoRef.current!
     const hls = hlsRef.current
+    console.warn('FairPlay: lighter quality,', why)
     if (hls) {
       const cur = hls.currentLevel >= 0 ? hls.currentLevel : hls.loadLevel
       if (cur > 0) {
