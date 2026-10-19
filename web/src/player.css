@@ -72,6 +72,7 @@
 .chat-float .reaction-bar { max-height: 120px; }
 .chat-float .composer, .chat-float .reaction-bar { overflow: hidden; transition: max-height 0.3s ease, opacity 0.25s ease, margin-top 0.3s ease; }
 .chat-float.composer-hidden .composer, .chat-float.composer-hidden .reaction-bar { max-height: 0; opacity: 0; margin-top: -8px; pointer-events: none; }
+.chat-float.quiet .bubble-row.seen { display: none; }
 .chat { display: flex; flex-direction: column; gap: 8px; transition: opacity 0.6s; }
 .chat-float.faded .chat-list { opacity: 0; }
 .chat-list { display: flex; flex-direction: column; gap: 8px; transition: opacity 0.6s; }

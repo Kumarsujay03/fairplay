@@ -28,6 +28,10 @@ const NEAR_BOTTOM = 24 // px from the bottom that still counts as "following" th
 export function Chat({ compact = false, open = true, uiOn = true }: { compact?: boolean; open?: boolean; uiOn?: boolean }) {
   const [text, setText] = useState('')
   const [idle, setIdle] = useState(false)
+  // Messages before this index have been on screen once already. When the
+  // chat is quiet and a new one arrives, only the new bubbles show; the older
+  // ones stay hidden until the controls or the pointer bring the stack up.
+  const [seenBefore, setSeenBefore] = useState(() => chat.value.length)
   const [hover, setHover] = useState(false)
   const [focus, setFocus] = useState(false)
   const [more, setMore] = useState(false)
@@ -60,6 +64,10 @@ export function Chat({ compact = false, open = true, uiOn = true }: { compact?: 
     }
     return () => clearTimeout(t)
   }, [msgs.length, msgs[0]?.id])
+
+  useEffect(() => {
+    if (idle) setSeenBefore(msgs.length)
+  }, [idle])
 
   const onScroll = () => {
     const el = list.current
@@ -105,27 +113,29 @@ export function Chat({ compact = false, open = true, uiOn = true }: { compact?: 
   const pointer = (hover && !touch) || focus
   const faded = !compact && idle && !pointer && !uiOn && following
   const composerHidden = !compact && !pointer && !(touch && uiOn)
+  const quiet = !compact && !pointer && !uiOn // only bubbles newer than the last fade are shown
 
   if (!open && !compact) return null
 
   return (
     <div
-      class={`chat ${compact ? 'chat-compact' : 'chat-float'} ${faded ? 'faded' : ''} ${composerHidden ? 'composer-hidden' : ''}`}
+      class={`chat ${compact ? 'chat-compact' : 'chat-float'} ${faded ? 'faded' : ''} ${composerHidden ? 'composer-hidden' : ''} ${quiet ? 'quiet' : ''}`}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
       <div class={`chat-list ${following ? '' : 'scrolled'}`} ref={list} aria-live="polite" onScroll={onScroll}>
-        {shown.map((m) => {
+        {shown.map((m, i) => {
           const self = m.sid === me
+          const seen = i < seenBefore ? 'seen' : ''
           if (m.sys) {
             return (
-              <div class="bubble-row sys" key={m.id}>
+              <div class={`bubble-row sys ${seen}`} key={m.id}>
                 <span class="sys-msg">{m.text}</span>
               </div>
             )
           }
           return (
-            <div class={`bubble-row ${self ? 'self' : ''}`} key={m.id}>
+            <div class={`bubble-row ${self ? 'self' : ''} ${seen}`} key={m.id}>
               <div class={`bubble ${self ? 'self' : 'other'}`}>
                 <div class="bubble-name" style={self ? undefined : { color: colorFor(m.sid) }}>
                   {self ? 'You' : m.name}

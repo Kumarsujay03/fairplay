@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- When the chat is quiet and a message arrives, only the new bubble appears, not the last few; the earlier ones come back when the controls are up or the pointer is in the chat corner
+
 ## 0.3.3 (2026-10-20)
 
 - Volume up to 200%, as in VLC. Above 100% the sound goes through a Web Audio gain node; the slider turns amber and shows the percentage. ↑ and ↓ step by 10% all the way. Remembered between showings. Not on iPhone and iPad, where Web Audio and the native player don't mix
