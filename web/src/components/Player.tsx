@@ -47,6 +47,7 @@ export function Player() {
   const [chatOpen, setChatOpen] = useState(true)
   const [showUi, setShowUi] = useState(true)
   const lastTouch = useRef(0)
+  const lastGesture = useRef(0)
   const [isFs, setIsFs] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
   const [inPip, setInPip] = useState(false)
@@ -97,11 +98,28 @@ export function Player() {
 
     const onPause = () => {
       setPaused(true)
-      // Pauses from outside our UI (media keys, PiP window) count as the user's.
-      // Pauses the browser makes on its own (a hidden tab, a stalled or
-      // reloaded stream) don't: they would pause the whole room for a host.
-      if (!e.isOwnAction() && !v.ended && !document.hidden && v.readyState >= 3 && e.mode === 'follow' && S.room.value?.playing) userPause()
+      // Only a pause that follows the viewer's own tap, key or media-key
+      // press counts as theirs. Browsers also pause on their own (a tab put
+      // in the background, a locked phone, a stalled stream); treating that
+      // as the viewer's choice left them in solo mode, behind the room, when
+      // they came back. The sync engine simply resumes those.
+      const fromUser = performance.now() - lastGesture.current < 1500
+      if (!e.isOwnAction() && !v.ended && fromUser && e.mode === 'follow' && S.room.value?.playing) userPause()
     }
+    const onGesture = () => (lastGesture.current = performance.now())
+    for (const ev of ['pointerdown', 'keydown', 'touchstart']) document.addEventListener(ev, onGesture, true)
+    // Lock-screen and headset controls arrive here, not as gestures.
+    const ms = navigator.mediaSession
+    try {
+      ms?.setActionHandler('pause', () => {
+        onGesture()
+        v.pause()
+      })
+      ms?.setActionHandler('play', () => {
+        onGesture()
+        togglePlay()
+      })
+    } catch {}
     const onPlay = () => setPaused(false)
     const onTime = () => {
       setCur(v.currentTime)
@@ -159,6 +177,11 @@ export function Player() {
       mq.removeEventListener('change', onMq)
       document.removeEventListener('fullscreenchange', onFs)
       document.removeEventListener('visibilitychange', onVis)
+      for (const ev of ['pointerdown', 'keydown', 'touchstart']) document.removeEventListener(ev, onGesture, true)
+      try {
+        ms?.setActionHandler('pause', null)
+        ms?.setActionHandler('play', null)
+      } catch {}
     }
   }, [])
 
@@ -468,7 +491,9 @@ export function Player() {
   // encoded; everyone else can go back but never ahead of the room, where
   // chunks may not exist yet (and it would spoil the film).
   function seekLimit(): number {
-    const encodedMax = m && m.state !== 'ready' ? Math.max(0, m.encoded - 2) : duration || Infinity
+    // Stay well behind the encoder's edge: a segment appears only once it
+    // is complete, and waiting for one puts a viewer out of step.
+    const encodedMax = m && m.state !== 'ready' ? Math.max(0, m.encoded - 15) : duration || Infinity
     if (canControl) return encodedMax
     return Math.min(encodedMax, engine.current?.target() ?? 0)
   }

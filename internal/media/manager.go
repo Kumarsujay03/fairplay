@@ -66,7 +66,6 @@ type Status struct {
 	Height   int          `json:"height,omitempty"`
 	Bitrate  int          `json:"bitrate,omitempty"` // top rung kbps, for the upload estimate
 	Versions string       `json:"versions,omitempty"`
-	Original bool         `json:"original,omitempty"` // top quality is the untouched original picture
 	EstBytes int64        `json:"estBytes,omitempty"` // predicted disk use when finished
 	Disk     int64        `json:"disk,omitempty"`     // disk use so far
 	key      string
@@ -81,7 +80,6 @@ type Manager struct {
 	tonemap        bool
 	versions       atomic.Value // string: VersionsOriginal, VersionsBalanced or VersionsFull
 	pace           atomic.Value // string: PaceCool or PaceFast
-	canPace        bool         // ffmpeg has -readrate_initial_burst (6.1+)
 
 	mu       sync.Mutex
 	items    map[string]Item
@@ -123,7 +121,6 @@ func NewManager(ctx context.Context, o Options) (*Manager, error) {
 		items: map[string]Item{}, statuses: map[string]*Status{},
 	}
 	m.enc = DetectEncoder(ctx, o.FFmpeg)
-	m.canPace = HasOption(o.FFmpeg, "readrate_initial_burst")
 	m.tonemap = HasFilter(o.FFmpeg, "zscale") && HasFilter(o.FFmpeg, "tonemap")
 	return m, nil
 }
@@ -336,7 +333,7 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	}
 
 	versions := m.Versions()
-	args, rungs, audio := buildArgs(it.abs, info, m.enc, m.tonemap, versions, m.Pace(), m.canPace)
+	args, rungs, audio := buildArgs(it.abs, info, m.enc, m.tonemap, versions, m.Pace())
 	est := estimateBytes(info, rungs, len(audio))
 	var notes []string
 	if info.Video.HDR && !m.tonemap {
@@ -374,7 +371,7 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	m.update(it.ID, func(s *Status) {
 		s.State, s.Duration, s.Rungs, s.Audio, s.Notes = StateEncoding, info.Duration, rn, at, notes
 		s.Width, s.Height, s.Bitrate = info.Video.Width, info.Video.Height, rungs[0].Bitrate+128
-		s.Versions, s.Original, s.EstBytes = versions, rungs[0].Copy, est
+		s.Versions, s.EstBytes = versions, est
 	})
 
 	// Subtitles run alongside the video encode.
@@ -395,7 +392,6 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 	master := filepath.Join(dir, "master.m3u8")
 	sc := bufio.NewScanner(stdout)
 	var lastEmit, lastDisk time.Time
-	masterFixed := false
 	for sc.Scan() {
 		k, v, ok := strings.Cut(sc.Text(), "=")
 		if !ok {
@@ -408,14 +404,10 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 				continue
 			}
 			sec := float64(us) / 1e6
-			playable := sec >= minf(12, info.Duration-0.5) && fileExists(master)
-			if playable && !masterFixed {
-				// Before anyone is told it's playable, so no player sees the wrong numbers.
-				if err := fixMaster(master, rungs); err != nil {
-					log.Printf("media: master playlist for %s: %v", it.RelPath, err)
-				}
-				masterFixed = true
-			}
+			// Playable once a safe lead exists: nobody should ever reach the
+			// encoder's edge, where players would wait for the next segment
+			// at different moments and drift apart.
+			playable := sec >= minf(playableLead, info.Duration-0.5) && fileExists(master)
 			if time.Since(lastEmit) > 700*time.Millisecond {
 				lastEmit = time.Now()
 				var disk int64 = -1
@@ -450,9 +442,6 @@ func (m *Manager) run(ctx context.Context, j *job, it Item) {
 		_ = os.RemoveAll(dir)
 		fail(errors.New(lastLine(msg)))
 		return
-	}
-	if err := fixMaster(master, rungs); err != nil {
-		log.Printf("media: master playlist for %s: %v", it.RelPath, err)
 	}
 	m.update(it.ID, func(s *Status) {
 		s.State, s.Playable, s.Encoded, s.Subs = StateReady, true, info.Duration, subs
@@ -544,10 +533,6 @@ func (m *Manager) loadCachedLocked(it Item) (Status, bool) {
 		return Status{}, false
 	}
 	st.ID, st.Name, st.key = it.ID, it.Name, m.key(it)
-	if st.Original && st.Bitrate > 128 {
-		// Videos prepared by 0.1.5 advertise the copied original far too low.
-		_ = fixMaster(filepath.Join(dir, "master.m3u8"), []rung{{Copy: true, Bitrate: st.Bitrate - 128}})
-	}
 	m.statuses[it.ID] = &st
 	touch(dir)
 	return st, true
@@ -604,6 +589,11 @@ func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
 }
+
+// playableLead is how many seconds must be prepared before playback may
+// start. The encoder is many times faster than playback, so the lead only
+// grows from there.
+const playableLead = 45
 
 func minf(a, b float64) float64 {
 	if a < b {
