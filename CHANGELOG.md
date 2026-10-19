@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.7 (2026-10-19)
+
+- Fix: the host's own player froze on "Buffering" or "Playback error" while guests played on, because preparing the video took almost all of the computer's CPU. ffmpeg now runs at the lowest priority from the start and uses at most half the CPU threads, so the browser on the host's computer always comes first
+- When a computer can't decode the picture fast enough, the player steps down to a lighter quality instead of stalling, and it drops quality when frames are being dropped
+- A long film no longer runs out of playback-error recoveries and reloads; the host's player stays in step with the room
+- Reactions stay fully visible for about four seconds so their animation plays through, then drift up and fade
+- Every animated reaction is prepared in the background after FairPlay starts (a one-time download, then cached), so even rare emoji animate the moment they are sent. Turn it off with `-emoji-preload=false`
+- The "Watching" list keeps each viewer's status, ping and quality on one line, with the host's buttons on their own line when the panel is narrow
+
 ## 0.1.6 (2026-10-19)
 
 - Fix: a player could get stuck on "Buffering" behind the "tap to start" screen while the room played on, and stay behind after a refresh. Autoplay retries now only stop when the browser really refuses, and a watchdog restarts loading at the room position when a player stops moving

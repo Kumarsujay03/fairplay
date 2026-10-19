@@ -195,6 +195,7 @@ The server is the clock. Each browser pings it every 2 seconds and estimates its
 | `-open` | `true` | Open the host console in your browser on start |
 | `-intermission` | `5` | Default intermission length in minutes. The host can change it in the console |
 | `-versions` | `balanced` | Quality versions for new videos: `original`, `balanced` (original + 720p) or `full` (original + 720p + 480p). The host can change it in the console |
+| `-emoji-preload` | `true` | Prepare every animated reaction in the background once, so they animate the moment they are sent. `false` prepares each one the first time it is used |
 | `-cache-max` | `40` | GB of prepared videos to keep. Older ones are removed first. `0` means no limit |
 | `-update` | `auto` | `auto`, `check` or `off` |
 | `-auto-admit` | `false` | Admit first-time opens without the lobby. Second devices always need approval |

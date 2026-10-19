@@ -72,3 +72,28 @@ func TestStoreDownloadsOnceAndCaches(t *testing.T) {
 		t.Fatal("bundled emoji must not be downloaded")
 	}
 }
+
+func TestWarmGivesUpWhenOffline(t *testing.T) {
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	old := CDN
+	CDN = srv.URL
+	defer func() { CDN = old }()
+
+	s := NewStore(t.TempDir(), "ffmpeg")
+	if n, err := s.Warm(context.Background()); err == nil || n != 0 {
+		t.Fatalf("warm = %d, %v; want a quick failure", n, err)
+	}
+	if hits != 5 {
+		t.Fatalf("tried %d downloads, want to stop after 5", hits)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := s.Warm(ctx); err == nil {
+		t.Fatal("a cancelled warm must stop")
+	}
+}

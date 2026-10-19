@@ -39,5 +39,5 @@ FairPlay runs on the host's own computer and is reachable from the internet thro
 - **Tunnel provider attacks.** The tunnel provider (Cloudflare or ngrok) terminates TLS and can see traffic.
 - **Large-scale DoS.** A large-scale denial of service against the tunnel URL is beyond what a home connection can absorb. Rate limits and bans only reduce the cost of small-scale abuse.
 - **The release signing key.** Theft of the key itself is out of scope. It is held by the maintainer and stored as a GitHub Actions secret.
-- **Emoji downloads.** The host's FairPlay contacts Google's emoji server (`fonts.gstatic.com`) the first time a rare emoji is used, so Google sees the host's IP address. Guests never contact it, and the 12 bundled emoji need no network.
+- **Emoji downloads.** After it starts, the host's FairPlay downloads the animated emoji it doesn't have yet from Google's emoji server (`fonts.gstatic.com`), once, so Google sees the host's IP address. With `-emoji-preload=false` it only does so the first time a rare emoji is used. Guests never contact it, and the 12 bundled emoji need no network.
 - **Wi-Fi traffic.** Guests joining over Wi-Fi use plain HTTP. Someone who controls the local network could read or alter that traffic. Use the tunnel link on networks you don't trust.

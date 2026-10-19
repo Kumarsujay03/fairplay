@@ -38,7 +38,7 @@ var version = "dev"
 type options struct {
 	media, tunnel, tunnelBin, ffmpeg, ffprobe, cache, data, name, update, versions string
 	port, maxGuests, interMinutes                                                  int
-	lan, autoAdmit, open                                                           bool
+	lan, autoAdmit, open, emojiPreload                                             bool
 	mediaSet                                                                       bool // -media was given explicitly
 	cacheMaxGB                                                                     float64
 }
@@ -62,6 +62,7 @@ func parseFlags(name string, args []string) options {
 	fs.IntVar(&o.maxGuests, "max", 12, "maximum number of guests")
 	fs.StringVar(&o.versions, "versions", "balanced", "quality versions to prepare: original (smallest), balanced (original + 720p) or full (original + 720p + 480p)")
 	fs.IntVar(&o.interMinutes, "intermission", 5, "default intermission length in minutes (the host can change it in the console)")
+	fs.BoolVar(&o.emojiPreload, "emoji-preload", true, "prepare every animated reaction in the background (a one-time download), so they animate the moment they are sent")
 	fs.BoolVar(&o.autoAdmit, "auto-admit", false, "admit first-time invite opens without the lobby (second devices always need approval)")
 	fs.BoolVar(&o.open, "open", true, "open the host console in your browser on start")
 	fs.StringVar(&o.update, "update", envOr("FAIRPLAY_UPDATE", "auto"), "updates: auto (install on start), check (only tell me) or off")
@@ -255,6 +256,15 @@ func start(o options) {
 				log.Printf("tunnel: %s", st.Error)
 			}
 		})
+	}
+	if o.emojiPreload && ffmpeg != "" {
+		go func() {
+			if n, err := srv.Emoji.Warm(ctx); n > 0 {
+				log.Printf("reactions: prepared %d animated emoji in advance", n)
+			} else if err != nil && ctx.Err() == nil {
+				log.Printf("reactions: couldn't prepare animated emoji in advance (%v); they load when first sent", err)
+			}
+		}()
 	}
 	writeRunning(o.data, o.port)
 	defer clearRunning(o.data)

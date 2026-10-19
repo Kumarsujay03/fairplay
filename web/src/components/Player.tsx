@@ -76,6 +76,19 @@ export function Player() {
     // rebuild the player if that doesn't help.
     e.onStall = (n) => {
       const hls = hlsRef.current
+      if (hls && bufferedAhead(v) > 2) {
+        // The video is downloaded but the picture doesn't move: this computer
+        // can't decode it fast enough (often because it is also preparing the
+        // video). Step down one quality and nudge the decoder along.
+        const cur = hls.currentLevel >= 0 ? hls.currentLevel : hls.loadLevel
+        if (cur > 0 && hls.autoLevelCapping !== cur - 1) {
+          hls.autoLevelCapping = cur - 1
+          hls.nextLevel = cur - 1
+          S.showToast('This computer is busy, using a lighter quality for now')
+        }
+        v.currentTime = v.currentTime + 0.05
+        return
+      }
       if (hls && n <= 2) {
         hls.stopLoad()
         if (n === 2) hls.recoverMediaError()
@@ -202,6 +215,7 @@ export function Player() {
           ignoreDevicePixelRatio: false,
           liveDurationInfinity: false,
           abrEwmaDefaultEstimate: 3_000_000,
+          capLevelOnFPSDrop: true, // a busy computer that drops frames gets a lighter quality
         })
         hlsRef.current = hls
         hls.on(HlsCtor.Events.MANIFEST_PARSED, () => {
@@ -219,16 +233,25 @@ export function Player() {
           if (l) setAutoLevel(qualityName(l.width, l.height))
         })
         let recover = 0
+        let lastMediaError = 0
         hls.on(HlsCtor.Events.ERROR, (_e, d) => {
+          console.warn('FairPlay playback:', d.type, d.details, d.fatal ? 'fatal' : '', d.reason || d.error?.message || '', d.frag ? `level ${d.frag.level} frag ${d.frag.sn} @${d.frag.start.toFixed(1)}s` : '')
           if (!d.fatal) return
           if (d.type === HlsCtor.ErrorTypes.NETWORK_ERROR) {
             setTimeout(() => hls?.startLoad(), 1000)
-          } else if (d.type === HlsCtor.ErrorTypes.MEDIA_ERROR && recover++ < 3) {
-            hls!.recoverMediaError()
-          } else {
-            S.showToast('Playback error, reloading the stream', 'error')
-            setTimeout(() => setReloadKey((k) => k + 1), 1500)
+            return
           }
+          if (d.type === HlsCtor.ErrorTypes.MEDIA_ERROR) {
+            // Up to three recoveries a minute; a two-hour film may hit a few.
+            if (performance.now() - lastMediaError > 60_000) recover = 0
+            lastMediaError = performance.now()
+            if (recover++ < 3) {
+              hls!.recoverMediaError()
+              return
+            }
+          }
+          S.showToast('Playback error, reloading the stream', 'error')
+          setTimeout(() => setReloadKey((k) => k + 1), 1500)
         })
         hls.loadSource(src)
         hls.attachMedia(v)
@@ -967,4 +990,12 @@ function Seekbar(p: {
       )}
     </div>
   )
+}
+
+function bufferedAhead(v: HTMLVideoElement): number {
+  const b = v.buffered
+  for (let i = 0; i < b.length; i++) {
+    if (b.start(i) <= v.currentTime + 0.3 && b.end(i) > v.currentTime) return b.end(i) - v.currentTime
+  }
+  return 0
 }
