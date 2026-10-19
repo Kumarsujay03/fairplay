@@ -75,7 +75,7 @@ It opens only port 8321, and only to your local network, using ufw, firewalld, W
 
 ## Disk space
 
-Prepared videos are kept so a second showing starts instantly.
+Prepared videos are kept so a second showing starts instantly. An interrupted preparation continues where it stopped the next time the file is played, instead of starting over.
 
 Every version is encoded, with a keyframe every 4 seconds so all versions share the same pieces; the top version gets 1.5× the file's own bitrate, so nothing is visibly lost. For a 3.5 GB 1080p film:
 

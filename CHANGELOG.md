@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.3 (2026-10-19)
+
+- An interrupted preparation continues where it stopped. Until now, stopping FairPlay (or the encode) part way through a film threw the finished part away, and the next start encoded the whole film again from the beginning while you watched the first minute. The whole 4-second pieces are now kept with a small record of what made them, and the next Prepare of the same file picks up at that point; playback is allowed at once when enough was already prepared. The pieces are only reused by the very same plan (same quality versions, audio tracks, encoder and ladder); anything else, or a real encoder error, still starts over
+- The host's cache list names an interrupted encode after its film instead of "Unfinished encode", and the cache limit never removes the room's own film while it waits to be continued
+
 ## 0.2.2 (2026-10-19)
 
 - Automatic quality switching during playback is gone for good. It arrived in 0.1.7–0.1.8 as a cure for a busy computer, and every version of it turned out to be a cause of the very thing it was meant to fix: a mid-stream quality switch restarts the decoder, which shows up as a black picture at the start and a few seconds' delay behind everyone else, with the message "This computer is busy, using a lighter quality". The last way it could still trigger was the stall check, which started counting from the room's clock, so pressing Play in the console and then opening the room fired it before this player had even begun. Now a player keeps the quality it has (Auto by bandwidth and screen size, or the one chosen by hand), the stall check only runs once the player is really playing and simply restarts loading at the room position, and the "busy" message no longer exists

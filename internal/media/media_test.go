@@ -2,6 +2,8 @@ package media
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http/httptest"
 	"os"
@@ -393,7 +395,7 @@ func TestVersionsAreAligned(t *testing.T) {
 
 func TestPaceAndKeyframeArgs(t *testing.T) {
 	info := Info{Duration: 100, Video: &VideoInfo{Codec: "h264", Width: 1920, Height: 800, PixFmt: "yuv420p", Kbps: 3000, FPS: 23.976}}
-	cool, _, _ := buildArgs("in.mkv", info, softwareEncoder, false, VersionsBalanced, PaceCool)
+	cool, _, _ := buildArgs("in.mkv", info, softwareEncoder, false, VersionsBalanced, PaceCool, encodeOpts{})
 	joined := " " + strings.Join(cool, " ") + " "
 	for _, want := range []string{"-force_key_frames:v:0 expr:gte(t,n_forced*4)", "-force_key_frames:v:1 expr:gte(t,n_forced*4)", "-g:v:0 96", "-g:v:1 96", "-hls_time 4", "-maxrate:v:0 4500k"} {
 		if !strings.Contains(joined, " "+want+" ") {
@@ -404,5 +406,258 @@ func TestPaceAndKeyframeArgs(t *testing.T) {
 		if strings.Contains(joined, " "+no+" ") {
 			t.Errorf("%q must be gone: %v", no, cool)
 		}
+	}
+}
+
+// TestResumeInterruptedEncode stops a real encode part way, as a shutdown or
+// Cancel would, and checks that the next Prepare continues from the whole
+// segments on disk and ends with one complete, continuous stream. It runs
+// with the encoder found on this machine and, when that is a GPU, once more
+// with libx264.
+func TestResumeInterruptedEncode(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if testing.Short() {
+		t.Skip("short mode")
+	}
+	ctx := context.Background()
+	detected := DetectEncoder(ctx, "ffmpeg")
+	t.Run(detected.Name, func(t *testing.T) { resumeRun(t, nil) })
+	if detected.Name != softwareEncoder.Name {
+		t.Run(softwareEncoder.Name, func(t *testing.T) { resumeRun(t, &softwareEncoder) })
+	}
+}
+
+func resumeRun(t *testing.T, force *Encoder) {
+	root := t.TempDir()
+	src := filepath.Join(root, "Clip.mkv")
+	gen := exec.Command("ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=size=640x360:rate=24", "-f", "lavfi", "-i", "sine=frequency=440",
+		"-t", "20", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "ac3", src)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("generate: %v %s", err, out)
+	}
+	cache := t.TempDir()
+	newManager := func() *Manager {
+		m, err := NewManager(context.Background(), Options{Root: root, Cache: cache, FFmpeg: "ffmpeg", FFprobe: "ffprobe"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if force != nil {
+			m.enc = *force
+		}
+		// A 360p clip encodes in well under a second; read the input at
+		// three times playback speed so there is something to interrupt.
+		m.testInputArgs = []string{"-readrate", "3"}
+		return m
+	}
+	waitFor := func(m *Manager, id string, ok func(Status) bool) Status {
+		deadline := time.Now().Add(60 * time.Second)
+		for time.Now().Before(deadline) {
+			if st, _ := m.Status(id); ok(st) || st.State == StateError {
+				return st
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		st, _ := m.Status(id)
+		t.Fatalf("timed out in state %+v", st)
+		return st
+	}
+
+	m := newManager()
+	items, _, _ := m.List()
+	id := items[0].ID
+	dir := filepath.Join(cache, m.key(items[0]))
+	if err := m.Prepare(id); err != nil {
+		t.Fatal(err)
+	}
+	st := waitFor(m, id, func(s Status) bool { return s.State == StateEncoding && s.Encoded >= 8 })
+	if st.State != StateEncoding {
+		t.Fatalf("state %s: %s", st.State, st.Error)
+	}
+	m.Cancel(id)
+	st, _ = m.Status(id)
+	b, err := os.ReadFile(filepath.Join(dir, partialFile))
+	if err != nil {
+		t.Fatalf("no partial record after Cancel: %v", err)
+	}
+	var p partial
+	if err := json.Unmarshal(b, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Segments < 1 || p.Completed != float64(p.Segments*segmentSeconds) || p.Completed >= 20 || st.State != StateIdle || st.Encoded != p.Completed {
+		t.Fatalf("partial %+v status %+v", p, st)
+	}
+	if strings.Join(p.Rungs, ",") != "360p" || p.Audio != 1 || p.Encoder != m.enc.Name || p.Ladder != ladderVersion {
+		t.Fatalf("partial plan %+v", p)
+	}
+	if fileExists(filepath.Join(dir, ".done")) {
+		t.Fatal("an interrupted encode must not be marked done")
+	}
+	for _, sub := range []string{"s_v0", "s_a0"} {
+		segs, err := playlistSegments(filepath.Join(dir, sub, "index.m3u8"))
+		if err != nil || len(segs) != p.Segments {
+			t.Fatalf("%s lists %v (%v), expected %d segments", sub, segs, err, p.Segments)
+		}
+	}
+	inits := map[string][]byte{}
+	for _, sub := range []string{"s_v0", "s_a0"} {
+		f, _ := filepath.Glob(filepath.Join(dir, sub, "init*.mp4"))
+		if len(f) != 1 {
+			t.Fatalf("%s init segments: %v", sub, f)
+		}
+		inits[f[0]], _ = os.ReadFile(f[0])
+	}
+
+	// FairPlay restarted: a new manager, a new Prepare.
+	m2 := newManager()
+	if _, _, err := m2.List(); err != nil {
+		t.Fatal(err)
+	}
+	if err := m2.Prepare(id); err != nil {
+		t.Fatal(err)
+	}
+	st = waitFor(m2, id, func(s Status) bool { return s.State == StateEncoding })
+	if st.Encoded < p.Completed {
+		t.Fatalf("a continued encode must start at %v s, got %+v", p.Completed, st)
+	}
+	st = waitFor(m2, id, func(s Status) bool { return s.State == StateReady })
+	if st.State != StateReady || !st.Playable || st.Encoded < 19.9 || st.Disk <= 0 {
+		t.Fatalf("final status %+v", st)
+	}
+	if fileExists(filepath.Join(dir, partialFile)) || !fileExists(filepath.Join(dir, ".done")) {
+		t.Fatal("the finished encode must be marked done and the partial record removed")
+	}
+	for f, before := range inits {
+		after, _ := os.ReadFile(f)
+		if string(after) != string(before) {
+			t.Errorf("%s changed when the encode was continued", f)
+		}
+	}
+	master, _ := os.ReadFile(filepath.Join(dir, "master.m3u8"))
+	if !strings.Contains(string(master), "s_v0/index.m3u8") || !strings.Contains(string(master), "s_a0/index.m3u8") {
+		t.Fatalf("master:\n%s", master)
+	}
+	for _, sub := range []string{"s_v0", "s_a0"} {
+		pl, _ := os.ReadFile(filepath.Join(dir, sub, "index.m3u8"))
+		segs, _ := playlistSegments(filepath.Join(dir, sub, "index.m3u8"))
+		var total float64
+		for _, l := range strings.Split(string(pl), "\n") {
+			if strings.HasPrefix(l, "#EXTINF:") {
+				var d float64
+				fmt.Sscanf(strings.TrimPrefix(l, "#EXTINF:"), "%f", &d)
+				total += d
+			}
+		}
+		if !strings.Contains(string(pl), "#EXT-X-ENDLIST") || total < 19.9 || total > 20.2 {
+			t.Fatalf("%s playlist (%.2f s):\n%s", sub, total, pl)
+		}
+		// Numbered without gaps from the first segment on.
+		for i, s := range segs {
+			if s != fmt.Sprintf("seg_%05d.m4s", i) || !fileExists(filepath.Join(dir, sub, s)) {
+				t.Fatalf("%s segments %v", sub, segs)
+			}
+		}
+		if sub == "s_v0" && len(segs) != 5 {
+			t.Fatalf("20 s must give 5 video segments, got %v", segs)
+		}
+		for _, l := range strings.Split(string(pl), "\n") {
+			if strings.HasPrefix(l, "#EXTINF:") && sub == "s_v0" {
+				var d float64
+				fmt.Sscanf(strings.TrimPrefix(l, "#EXTINF:"), "%f", &d)
+				if d < 3.9 || d > 4.1 {
+					t.Fatalf("video segments must be 4 s:\n%s", pl)
+				}
+			}
+		}
+	}
+	// Every video segment, old and new, decodes against the one init segment.
+	initV, _ := filepath.Glob(filepath.Join(dir, "s_v0", "init*.mp4"))
+	for i := 0; i < 5; i++ {
+		seg := filepath.Join(dir, "s_v0", fmt.Sprintf("seg_%05d.m4s", i))
+		stitched := filepath.Join(t.TempDir(), "seg.mp4")
+		a, _ := os.ReadFile(initV[0])
+		b, _ := os.ReadFile(seg)
+		os.WriteFile(stitched, append(a, b...), 0o600)
+		out, err := exec.Command("ffprobe", "-v", "error", "-count_frames", "-select_streams", "v",
+			"-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", stitched).Output()
+		if err != nil || strings.TrimSpace(string(out)) != "96" {
+			t.Fatalf("segment %d: %q %v", i, out, err)
+		}
+	}
+	rec := httptest.NewRecorder()
+	m2.ServeHLS(rec, httptest.NewRequest("GET", "/", nil), id, "s_v0/seg_00004.m4s")
+	if rec.Code != 200 {
+		t.Fatalf("last segment: %d", rec.Code)
+	}
+}
+
+// TestPartialPlanMismatch: an interrupted encode is only continued by the
+// plan that made it; anything else starts over. Versions that got further
+// than the rest are cut back so all stop at the same segment.
+func TestPartialPlanMismatch(t *testing.T) {
+	dir := t.TempDir()
+	mkVariant := func(sub string, n int) {
+		d := filepath.Join(dir, sub)
+		os.MkdirAll(d, 0o700)
+		pl := "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-MAP:URI=\"init.mp4\"\n"
+		os.WriteFile(filepath.Join(d, "init.mp4"), []byte("init"), 0o600)
+		for i := 0; i < n; i++ {
+			f := fmt.Sprintf("seg_%05d.m4s", i)
+			pl += "#EXTINF:4.000000,\n" + f + "\n"
+			os.WriteFile(filepath.Join(d, f), []byte("seg"), 0o600)
+		}
+		os.WriteFile(filepath.Join(d, "seg_00009.m4s.tmp"), []byte("half"), 0o600)
+		os.WriteFile(filepath.Join(d, "index.m3u8"), []byte(pl), 0o600)
+	}
+	mkVariant("s_v0", 3)
+	mkVariant("s_v1", 3)
+	mkVariant("s_a0", 2)
+	os.WriteFile(filepath.Join(dir, "master.m3u8"), []byte("#EXTM3U\n"), 0o600)
+	p := partial{Ladder: ladderVersion, Versions: VersionsBalanced, Encoder: "libx264", Rungs: []string{"720p", "480p"}, Audio: 1}
+	kept, err := savePartial(dir, p, 13.5)
+	if err != nil || kept != 8 {
+		t.Fatalf("kept %v %v", kept, err)
+	}
+	for _, sub := range []string{"s_v0", "s_v1", "s_a0"} {
+		segs, _ := playlistSegments(filepath.Join(dir, sub, "index.m3u8"))
+		if len(segs) != 2 || fileExists(filepath.Join(dir, sub, "seg_00002.m4s")) || fileExists(filepath.Join(dir, sub, "seg_00009.m4s.tmp")) {
+			t.Fatalf("%s not cut back to 2 segments: %v", sub, segs)
+		}
+	}
+	if got, err := loadPartial(dir, p, 100); err != nil || got != 8 {
+		t.Fatalf("same plan: %v %v", got, err)
+	}
+	for name, other := range map[string]partial{
+		"fewer rungs":    {Ladder: ladderVersion, Versions: VersionsBalanced, Encoder: "libx264", Rungs: []string{"720p"}, Audio: 1},
+		"other rung":     {Ladder: ladderVersion, Versions: VersionsBalanced, Encoder: "libx264", Rungs: []string{"720p", "360p"}, Audio: 1},
+		"other encoder":  {Ladder: ladderVersion, Versions: VersionsBalanced, Encoder: "h264_vaapi", Rungs: []string{"720p", "480p"}, Audio: 1},
+		"more audio":     {Ladder: ladderVersion, Versions: VersionsBalanced, Encoder: "libx264", Rungs: []string{"720p", "480p"}, Audio: 2},
+		"other ladder":   {Ladder: "ladder-v4", Versions: VersionsBalanced, Encoder: "libx264", Rungs: []string{"720p", "480p"}, Audio: 1},
+		"other versions": {Ladder: ladderVersion, Versions: VersionsFull, Encoder: "libx264", Rungs: []string{"720p", "480p"}, Audio: 1},
+	} {
+		if got, err := loadPartial(dir, other, 100); got != 0 || err == nil {
+			t.Errorf("%s must be discarded, got %v %v", name, got, err)
+		}
+	}
+	if got, err := loadPartial(dir, p, 8.2); got != 0 || err == nil {
+		t.Errorf("nothing left to encode must start over, got %v %v", got, err)
+	}
+	os.Remove(filepath.Join(dir, "s_v1", "seg_00001.m4s"))
+	if got, err := loadPartial(dir, p, 100); got != 0 || err == nil {
+		t.Errorf("a missing segment must start over, got %v %v", got, err)
+	}
+	if got, err := loadPartial(t.TempDir(), p, 100); got != 0 || !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("no record: %v %v", got, err)
+	}
+	// Nothing whole yet: nothing to keep.
+	empty := t.TempDir()
+	for _, sub := range []string{"s_v0", "s_a0"} {
+		os.MkdirAll(filepath.Join(empty, sub), 0o700)
+		os.WriteFile(filepath.Join(empty, sub, "index.m3u8"), []byte("#EXTM3U\n"), 0o600)
+	}
+	if kept, err := savePartial(empty, partial{Rungs: []string{"360p"}, Audio: 1}, 3); err == nil || kept != 0 {
+		t.Errorf("empty playlists: %v %v", kept, err)
 	}
 }
