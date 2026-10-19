@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -58,28 +60,63 @@ func planLadder(width, height int) []rung {
 
 // Encoder is a video encoder ffmpeg can use on this machine.
 type Encoder struct {
-	Name string
-	Args []string
+	Name   string
+	Args   []string
+	Device string // GPU device, for VAAPI
 }
 
-var softwareEncoder = Encoder{"libx264", []string{"-c:v", "libx264", "-preset", "veryfast", "-profile:v", "high", "-pix_fmt", "yuv420p", "-sc_threshold", "0"}}
+var softwareEncoder = Encoder{Name: "libx264", Args: []string{"-c:v", "libx264", "-preset", "veryfast", "-profile:v", "high", "-pix_fmt", "yuv420p", "-sc_threshold", "0"}}
 
 var hwCandidates = []Encoder{
-	{"h264_nvenc", []string{"-c:v", "h264_nvenc", "-preset", "p4", "-profile:v", "high", "-pix_fmt", "yuv420p", "-forced-idr", "1"}},
-	{"h264_qsv", []string{"-c:v", "h264_qsv", "-preset", "veryfast", "-pix_fmt", "nv12"}},
-	{"h264_videotoolbox", []string{"-c:v", "h264_videotoolbox", "-pix_fmt", "yuv420p", "-allow_sw", "0"}},
+	{Name: "h264_nvenc", Args: []string{"-c:v", "h264_nvenc", "-preset", "p4", "-profile:v", "high", "-pix_fmt", "yuv420p", "-forced-idr", "1"}},
+	{Name: "h264_qsv", Args: []string{"-c:v", "h264_qsv", "-preset", "veryfast", "-pix_fmt", "nv12"}},
+	{Name: "h264_videotoolbox", Args: []string{"-c:v", "h264_videotoolbox", "-pix_fmt", "yuv420p", "-allow_sw", "0"}},
+}
+
+// VAAPI is the GPU encoder of Intel and AMD graphics on Linux. Frames are
+// uploaded to the GPU once and every version is scaled and encoded there,
+// so preparing a film costs the CPU well under one core and the laptop stays
+// cool enough for the host's own player.
+const vaapiName = "h264_vaapi"
+
+func vaapiEncoder(dev string) Encoder {
+	return Encoder{Name: vaapiName, Device: dev, Args: []string{"-c:v", "h264_vaapi", "-profile:v", "high", "-rc_mode", "VBR"}}
+}
+
+// globalArgs are the options an encoder needs before the input.
+func (e Encoder) globalArgs() []string {
+	if e.Name != vaapiName {
+		return nil
+	}
+	return []string{"-init_hw_device", "vaapi=va:" + e.Device, "-filter_hw_device", "va"}
 }
 
 // DetectEncoder tries each hardware encoder with a two-frame test encode and
-// falls back to libx264.
+// falls back to libx264. VAAPI comes first on Linux.
 func DetectEncoder(ctx context.Context, ffmpeg string) Encoder {
-	for _, c := range hwCandidates {
+	try := func(c Encoder, filter string) bool {
 		tctx, cancel := context.WithTimeout(ctx, 8*time.Second)
-		args := append([]string{"-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=640x360:d=0.2", "-frames:v", "2"}, c.Args...)
-		args = append(args, "-f", "null", "-")
-		err := exec.CommandContext(tctx, ffmpeg, args...).Run()
-		cancel()
-		if err == nil {
+		defer cancel()
+		args := append([]string{"-hide_banner", "-loglevel", "error"}, c.globalArgs()...)
+		args = append(args, "-f", "lavfi", "-i", "color=c=black:s=640x360:d=0.2", "-frames:v", "2")
+		if filter != "" {
+			args = append(args, "-vf", filter)
+		}
+		args = append(args, c.Args...)
+		// Rate-controlled encoders refuse to open without a bitrate.
+		args = append(args, "-b:v", "1000k", "-maxrate", "1500k", "-f", "null", "-")
+		return exec.CommandContext(tctx, ffmpeg, args...).Run() == nil
+	}
+	if runtime.GOOS == "linux" {
+		devs, _ := filepath.Glob("/dev/dri/renderD*")
+		for _, dev := range devs {
+			if c := vaapiEncoder(dev); try(c, "format=nv12,hwupload") {
+				return c
+			}
+		}
+	}
+	for _, c := range hwCandidates {
+		if try(c, "") {
 			return c
 		}
 	}
@@ -126,20 +163,34 @@ func buildArgs(input string, info Info, enc Encoder, tonemap bool) ([]string, []
 			"tonemap=tonemap=hable:desat=0", "zscale=t=bt709:m=bt709:r=tv", "format=yuv420p")
 	}
 	pre = append(pre, "scale=trunc(iw*sar/2)*2:ih", "setsar=1")
+	gpu := enc.Name == vaapiName
+	if gpu {
+		pre = append(pre, "format=nv12", "hwupload")
+	}
 	fc := "[0:v:0]" + strings.Join(pre, ",") + fmt.Sprintf(",split=%d", len(rungs))
 	for i := range rungs {
 		fc += fmt.Sprintf("[s%d]", i)
 	}
 	for i, r := range rungs {
 		// Scale the long side down to the rung, never up, keeping the shape.
-		if portrait {
+		switch {
+		case gpu && portrait:
+			fc += fmt.Sprintf(";[s%d]scale_vaapi=w=-2:h='min(%d,ih)'[v%d]", i, r.Long, i)
+		case gpu:
+			fc += fmt.Sprintf(";[s%d]scale_vaapi=w='min(%d,iw)':h=-2[v%d]", i, r.Long, i)
+		case portrait:
 			fc += fmt.Sprintf(";[s%d]scale=-2:'min(%d,ih)':flags=bicubic[v%d]", i, r.Long, i)
-		} else {
+		default:
 			fc += fmt.Sprintf(";[s%d]scale='min(%d,iw)':-2:flags=bicubic[v%d]", i, r.Long, i)
 		}
 	}
 
-	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i", input, "-filter_complex", fc}
+	// Half the CPU threads at most: the host usually watches on this same
+	// computer, and the browser needs free cores to decode the picture.
+	threads := fmt.Sprint(max(2, runtime.NumCPU()/2))
+	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-threads", threads}
+	args = append(args, enc.globalArgs()...)
+	args = append(args, "-i", input, "-filter_complex", fc, "-filter_complex_threads", threads)
 	for i := range rungs {
 		args = append(args, "-map", fmt.Sprintf("[v%d]", i))
 	}
@@ -147,7 +198,16 @@ func buildArgs(input string, info Info, enc Encoder, tonemap bool) ([]string, []
 		args = append(args, "-map", fmt.Sprintf("0:a:%d", a.Index))
 	}
 	args = append(args, enc.Args...)
-	args = append(args, "-force_key_frames", "expr:gte(t,n_forced*4)")
+	args = append(args, "-threads", threads, "-force_key_frames", "expr:gte(t,n_forced*4)")
+	if gpu {
+		// The GPU encoder's own keyframe interval matches the 4-second marks,
+		// so it adds no keyframes of its own between them.
+		fps := info.Video.FPS
+		if fps <= 0 || fps > 120 {
+			fps = 24
+		}
+		args = append(args, "-g", fmt.Sprint(int(fps*4+0.5)))
+	}
 	for i, r := range rungs {
 		args = append(args,
 			fmt.Sprintf("-b:v:%d", i), fmt.Sprintf("%dk", r.Bitrate),

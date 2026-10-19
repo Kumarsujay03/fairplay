@@ -77,6 +77,8 @@ It opens only port 8321, and only to your local network, using ufw, firewalld, W
 
 Prepared videos are kept so a second showing starts instantly. A full movie takes a few GB.
 
+On Linux with Intel or AMD graphics, videos are prepared on the GPU (the start-up banner says `Encoder h264_vaapi`), which leaves the CPU free for the host's own player. If it says `libx264` on such a machine, install the VAAPI driver (Ubuntu/Debian: `intel-media-va-driver-non-free` for Intel, `mesa-va-drivers` for AMD) and start FairPlay again.
+
 | OS | Where they are kept |
 |---|---|
 | Linux | `~/.cache/fairplay` |
