@@ -3,6 +3,14 @@ import type { JSX } from 'preact'
 
 const paths: Record<string, JSX.Element> = {
   play: <path d="M7 4.5v15l13-7.5z" fill="currentColor" stroke="none" />,
+  more: (
+    <>
+      <circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
+      <circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none" />
+    </>
+  ),
+  chevron: <path d="M6 9l6 6 6-6" />,
   pause: (
     <>
       <rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor" stroke="none" />

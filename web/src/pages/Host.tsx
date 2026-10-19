@@ -180,42 +180,45 @@ function Console() {
   const statusLive = st?.playing
   const pos = st ? (!st.playing || socket.clock.now() < st.anchor ? st.pos : st.pos + (socket.clock.now() - st.anchor) / 1000) : 0
 
+  const endRoom = () => confirm('End the room? Every invite link stops working and everyone is disconnected.') && socket.send({ t: 'host', op: 'end_room' })
+  const stopFairPlay = async () => {
+    if (!confirm('Stop FairPlay? The room ends for everyone and FairPlay closes on this computer. Start it again with: fairplay')) return
+    try {
+      await post('/api/host/shutdown')
+    } catch {}
+    S.kicked.value = 'FairPlay has stopped on this computer. You can close this tab. Start it again with: fairplay'
+    setTimeout(() => socket.close(), 100)
+  }
+
   return (
     <div class="console">
       <header class="console-top">
-        <Logo />
-        <span class="dim">Host console</span>
-        <VersionTag version={version} upd={upd} />
+        <div class="row brand">
+          <Logo size={28} />
+          <span class="console-name">Host console</span>
+          <VersionTag version={version} upd={upd} />
+        </div>
         <span class="grow" />
-        <span class="pill tag neutral">
-          <Icon name="lock" size={14} /> Host verified
-        </span>
-        <span class={`pill badge ${statusLive ? 'live' : 'wait'}`}>
+        <span class={`status-pill ${statusLive ? 'live' : st?.media ? 'paused' : 'idle'}`} title="Host verified on this computer">
           <span class="dot" />
-          {statusLive ? `ROOM LIVE · ${fmtTime(pos)}` : st?.media ? `PAUSED · ${fmtTime(pos)}` : 'NO VIDEO'}
+          {statusLive ? `Live · ${fmtTime(pos)}` : st?.media ? `Paused · ${fmtTime(pos)}` : 'No video'}
         </span>
-        <button
-          class="btn btn-danger"
-          title="End the room for everyone and close FairPlay on this computer"
-          onClick={async () => {
-            if (!confirm('Stop FairPlay? The room ends for everyone and FairPlay closes on this computer. Start it again with: fairplay')) return
-            try {
-              await post('/api/host/shutdown')
-            } catch {}
-            S.kicked.value = 'FairPlay has stopped on this computer. You can close this tab. Start it again with: fairplay'
-            setTimeout(() => socket.close(), 100)
-          }}
-        >
-          <Icon name="x" size={16} /> Stop FairPlay
-        </button>
         <button class="btn btn-primary" onClick={() => navigate('/room')}>
           <Icon name="play" size={16} /> Open player
         </button>
+        <RowMenu
+          label="More"
+          items={[
+            { label: 'End room & revoke all links', hint: 'Everyone is disconnected; the room stays open for new invites', danger: true, onClick: endRoom },
+            { label: 'Stop FairPlay', hint: 'Ends the room and closes FairPlay on this computer', danger: true, onClick: stopFairPlay },
+          ]}
+        />
       </header>
 
       <main class="console-grid">
         <section class="col gap24">
-          <NowPlaying
+          <ShowCard cur={cur} pos={pos} />
+          <Library
             cur={cur}
             items={items}
             root={root}
@@ -226,26 +229,94 @@ function Console() {
               S.library.value = { ...r.status, ...S.library.value }
             }}
           />
-          <Playback pos={pos} />
-          <Share guests={guests.length} />
-          <Storage />
         </section>
         <section class="col gap24">
           {S.lobby.value.length > 0 && (
             <div class="card lobby-card">
               <div class="card-head">
-                <div class="h18">Waiting to join · {S.lobby.value.length}</div>
+                <div class="h18">Waiting to join</div>
+                <span class="count">{S.lobby.value.length}</span>
               </div>
               {S.lobby.value.map((p) => (
                 <LobbyEntry key={p.id} p={p} />
               ))}
             </div>
           )}
-          <Invites tokens={tokens} setTokens={setTokens} />
-          <Viewers />
-          <RoomSettings />
+          <People tokens={tokens} setTokens={setTokens} />
+          <div class="card settings-card">
+            <Share guests={guests.length} />
+            <RoomSettings />
+            <Storage />
+          </div>
         </section>
       </main>
+    </div>
+  )
+}
+
+/** A small "⋯" menu. Closes on a click anywhere else or on Escape. */
+function RowMenu({ items, label = 'Actions' }: { items: { label: string; hint?: string; danger?: boolean; onClick: () => void }[]; label?: string }) {
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
+    addEventListener('click', close)
+    addEventListener('keydown', key)
+    return () => {
+      removeEventListener('click', close)
+      removeEventListener('keydown', key)
+    }
+  }, [open])
+  if (!items.length) return null
+  return (
+    <div class="menu-wrap" onClick={(e) => e.stopPropagation()}>
+      <button class={`icon-btn sm plain ${open ? 'active' : ''}`} onClick={() => setOpen(!open)} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open}>
+        <Icon name="more" size={18} />
+      </button>
+      {open && (
+        <div class="dropdown" role="menu">
+          {items.map((it) => (
+            <button
+              key={it.label}
+              role="menuitem"
+              class={`dropdown-item ${it.danger ? 'danger' : ''}`}
+              onClick={() => {
+                setOpen(false)
+                it.onClick()
+              }}
+            >
+              <span>{it.label}</span>
+              {it.hint && <span class="caption muted">{it.hint}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** The film the room is showing, its tracks, and the transport that moves the
+ * global timer for everyone. The host's main job, in one card. */
+function ShowCard({ cur, pos }: { cur: S.MediaStatus | null; pos: number }) {
+  const lib = S.library.value
+  const curLive = cur ? lib[cur.id] || cur : null
+  return (
+    <div class="card show-card">
+      <div class="card-head">
+        <div class="h18">Now showing</div>
+        {cur && (
+          <button
+            class="btn btn-quiet btn-sm"
+            title="Stop the video for everyone and stop preparing it"
+            onClick={() => confirm(`Stop “${cur.name}” for everyone?`) && socket.send({ t: 'host', op: 'clear' })}
+          >
+            Stop &amp; clear
+          </button>
+        )}
+      </div>
+      {curLive ? <MediaSummary m={curLive} /> : <div class="empty">Nothing is showing. Pick a video from the library below; it starts preparing right away.</div>}
+      {curLive && <Playback pos={pos} />}
     </div>
   )
 }
@@ -353,7 +424,7 @@ function FolderPicker({ root, onDone, onCancel }: { root: string; onDone: (r: Li
   )
 }
 
-function NowPlaying({
+function Library({
   cur,
   items,
   root,
@@ -371,19 +442,17 @@ function NowPlaying({
   const queuedAt = (id: string) => S.queue.value.findIndex((q) => q.id === id)
   const lib = S.library.value
   const shown = items.filter((i) => i.path.toLowerCase().includes(filter.toLowerCase()))
-  const curLive = cur ? lib[cur.id] || cur : null
   return (
     <div class="card">
       <div class="card-head">
-        <div class="h18">Now playing</div>
+        <div class="h18">Library</div>
         <div class="row">
-          {cur && (
-            <button
-              class="btn btn-danger btn-sm"
-              title="Stop the video for everyone and stop preparing it"
-              onClick={() => confirm(`Stop “${cur.name}” for everyone?`) && socket.send({ t: 'host', op: 'clear' })}
-            >
-              Stop &amp; clear
+          <span class="mono caption muted ellipsis folder-path" title={root}>
+            {root || '…'}
+          </span>
+          {!picking && (
+            <button class="btn btn-quiet btn-sm" onClick={() => setPicking(true)}>
+              Change folder
             </button>
           )}
           <button class="icon-btn sm plain" onClick={onRefresh} title="Rescan folder">
@@ -391,8 +460,6 @@ function NowPlaying({
           </button>
         </div>
       </div>
-      {curLive ? <MediaSummary m={curLive} /> : <div class="dim">Pick a video below. It starts preparing right away.</div>}
-
       {S.queue.value.length > 0 && (
         <div class="col">
           <div class="label dim">Up next</div>
@@ -422,17 +489,6 @@ function NowPlaying({
       )}
 
       <div class="col">
-        <div class="row folder-line">
-          <Icon name="film" size={16} class="muted" />
-          <span class="mono caption ellipsis grow" title={root}>
-            {root || '…'}
-          </span>
-          {!picking && (
-            <button class="btn btn-ghost btn-sm" onClick={() => setPicking(true)}>
-              Change folder
-            </button>
-          )}
-        </div>
         {picking && (
           <FolderPicker
             root={root}
@@ -472,7 +528,7 @@ function NowPlaying({
                     Queued ✓ <span class="muted">· remove</span>
                   </button>
                 ) : (
-                  <button class="btn btn-sm btn-ghost" onClick={() => socket.send({ t: 'host', op: 'queue_add', media: it.id })}>
+                  <button class="btn btn-sm btn-quiet" onClick={() => socket.send({ t: 'host', op: 'queue_add', media: it.id })}>
                     Queue
                   </button>
                 )}
@@ -611,7 +667,7 @@ function IntermissionStart({ disabled, onStart }: { disabled: boolean; onStart: 
   }
   return (
     <div class="row inter-start">
-      <button class="btn btn-danger" onClick={() => onStart(commit(min))} disabled={disabled}>
+      <button class="btn btn-ghost" onClick={() => onStart(commit(min))} disabled={disabled}>
         Intermission
       </button>
       <label class="row inter-len" title="Intermission length in minutes, 1 to 120">
@@ -637,8 +693,7 @@ function Playback({ pos }: { pos: number }) {
   const dur = m?.duration || 0
   const send = (op: string, extra: object = {}) => socket.send({ t: 'cmd', op, ...extra })
   return (
-    <div class="card">
-      <div class="h18">Room playback</div>
+    <div class="transport col">
       <div class="row wrap">
         <button class="icon-btn" onClick={() => send('seek', { pos: pos - 10 })} title="Back 10s for everyone">
           <Icon name="back10" />
@@ -721,9 +776,14 @@ function Storage() {
   const pct = info.max > 0 ? Math.min(100, (info.bytes / info.max) * 100) : 0
   const others = info.items.filter((i) => !i.inUse)
   return (
-    <div class="card">
-      <div class="card-head">
-        <div class="h18">Storage</div>
+    <details class="settings-section">
+      <summary class="section-title row">
+        <span class="grow">Storage</span>
+        <span class="caption muted">{fmtBytes(info.bytes)}</span>
+        <Icon name="chevron" size={16} class="muted chev" />
+      </summary>
+      <div class="col section-body">
+      <div class="row" style={{ justifyContent: 'flex-end' }}>
         <button class="icon-btn sm plain" onClick={load} title="Refresh">
           <Icon name="refresh" size={18} />
         </button>
@@ -763,7 +823,8 @@ function Storage() {
       <div class="caption muted">
         Older videos are removed automatically when the limit is reached. After closing FairPlay you can also run <span class="mono">fairplay cache clear</span>.
       </div>
-    </div>
+      </div>
+    </details>
   )
 }
 
@@ -775,8 +836,8 @@ function Share({ guests }: { guests: number }) {
   const kbps = S.media.value?.bitrate || 0
   const need = ((kbps * Math.max(1, guests)) / 1000).toFixed(1)
   return (
-    <div class="card">
-      <div class="h18">Share</div>
+    <div class="settings-section col">
+      <div class="section-title">Sharing</div>
       <div class="col">
         <div class="label dim">Internet ({t?.provider || 'tunnel'})</div>
         {t?.state === 'up' ? (
@@ -825,11 +886,10 @@ function Share({ guests }: { guests: number }) {
   )
 }
 
-function Invites({ tokens, setTokens }: { tokens: Record<string, string>; setTokens: (t: Record<string, string>) => void }) {
+function People({ tokens, setTokens }: { tokens: Record<string, string>; setTokens: (t: Record<string, string>) => void }) {
   const [label, setLabel] = useState('')
   const [hours, setHours] = useState(24)
   const t = S.tunnel.value
-  const online = new Set(S.peers.value.map((p) => p.name.toLowerCase()))
 
   const base = (kind: 'net' | 'lan') => (kind === 'net' ? t?.url : t?.lan?.[0]) || location.origin
   const linkFor = (id: string, kind: 'net' | 'lan') => `${base(kind)}/j/${id}#t=${tokens[id]}`
@@ -882,11 +942,40 @@ function Invites({ tokens, setTokens }: { tokens: Record<string, string>; setTok
     if (await copy(linkFor(id, kind))) S.showToast('Link copied')
   }
 
+  const peers = S.peers.value
+  const invites = S.invites.value
+  const peerFor = (inv: S.InviteView) => peers.find((p) => p.name.toLowerCase() === (inv.name || inv.label).toLowerCase())
+  const matched = new Set<string>()
+  type Row = { key: string; name: string; inv?: S.InviteView; peer?: S.Peer }
+  const rows: Row[] = []
+  for (const p of peers.filter((p) => p.role === 'host')) rows.push({ key: p.id, name: p.name, peer: p })
+  for (const inv of invites) {
+    const peer = peerFor(inv)
+    if (peer) matched.add(peer.id)
+    rows.push({ key: inv.id, name: inv.label, inv, peer })
+  }
+  for (const p of peers) if (p.role !== 'host' && !matched.has(p.id)) rows.push({ key: p.id, name: p.name, peer: p })
+  const watching = peers.length
+
+  const inviteStatus = (inv: S.InviteView) =>
+    inv.revoked
+      ? { t: 'Revoked', c: 'bad' }
+      : inv.expired
+        ? { t: 'Expired', c: 'bad' }
+        : inv.admitted
+          ? { t: 'Joined before', c: 'neutral' }
+          : inv.bound
+            ? { t: 'Opened, waiting', c: 'warn' }
+            : { t: 'Not opened yet', c: 'neutral' }
+
   return (
     <div class="card">
-      <div class="h18">Invites</div>
-      <form class="row" onSubmit={create}>
-        <input class="input grow" placeholder="Guest name, e.g. Priya" value={label} maxLength={24} onInput={(e) => setLabel((e.target as HTMLInputElement).value)} />
+      <div class="card-head">
+        <div class="h18">People</div>
+        <span class="count" title="Watching now">{watching}</span>
+      </div>
+      <form class="row invite-form" onSubmit={create}>
+        <input class="input grow" placeholder="Invite someone by name" value={label} maxLength={24} onInput={(e) => setLabel((e.target as HTMLInputElement).value)} />
         <select class="input select" value={hours} onChange={(e) => setHours(parseInt((e.target as HTMLSelectElement).value))} aria-label="Expires after">
           <option value={6}>6 h</option>
           <option value={24}>24 h</option>
@@ -898,129 +987,58 @@ function Invites({ tokens, setTokens }: { tokens: Record<string, string>; setTok
         </button>
       </form>
       <div class="divider-list">
-        {S.invites.value.length === 0 && <div class="caption muted pad">No invites yet. Each person gets their own link.</div>}
-        {S.invites.value.map((inv) => {
-          const isOn = online.has((inv.name || inv.label).toLowerCase())
-          const status = inv.revoked
-            ? { t: 'Revoked', c: 'bad' }
-            : inv.expired
-              ? { t: 'Expired', c: 'bad' }
-              : isOn
-                ? { t: 'Watching now', c: 'ok' }
-                : inv.admitted
-                  ? { t: 'Joined before', c: 'neutral' }
-                  : inv.bound
-                    ? { t: 'Opened, waiting', c: 'warn' }
-                    : { t: 'Not opened yet', c: 'neutral' }
-          const has = !!tokens[inv.id]
+        {rows.length === 0 && <div class="caption muted pad">No one yet. Invite someone above; the link is copied for you to send.</div>}
+        {rows.map(({ key, name, inv, peer }) => {
+          const ps = peer ? peerStatus(peer) : null
+          const status = ps ? { t: ps.text, c: ps.cls } : inv ? inviteStatus(inv) : { t: '', c: 'neutral' }
+          const has = inv ? !!tokens[inv.id] : false
+          const live = inv && !inv.revoked && !inv.expired
+          const items: { label: string; hint?: string; danger?: boolean; onClick: () => void }[] = []
+          if (inv && live && has) {
+            if (t?.state === 'up') items.push({ label: 'Copy internet link', onClick: () => doCopy(inv.id, 'net') })
+            if ((t?.lan?.length || 0) > 0) items.push({ label: 'Copy Wi-Fi link', onClick: () => doCopy(inv.id, 'lan') })
+            items.push({ label: 'Show QR code', hint: 'Scan it with a phone camera', onClick: () => setQrFor(inv) })
+          }
+          if (inv && live && !has) items.push({ label: 'New link', hint: 'Links are shown once; the old one stops working', onClick: () => regen(inv.id) })
+          if (peer && peer.role !== 'host') {
+            items.push({ label: peer.chatOff ? 'Show chat' : 'Hide chat', hint: 'Hidden viewers see no messages and cannot post', onClick: () => socket.send({ t: 'host', op: 'chat_hide', sid: peer.id, on: !peer.chatOff }) })
+            items.push({ label: peer.cohost ? 'Take back control' : 'Give control', hint: 'Co-hosts can play, pause, seek and start intermissions', onClick: () => socket.send({ t: 'host', op: 'cohost', sid: peer.id, on: !peer.cohost }) })
+            items.push({ label: 'Remove from room', danger: true, onClick: () => confirm(`Remove ${peer.name}?`) && socket.send({ t: 'host', op: 'kick', sid: peer.id }) })
+          }
+          if (inv && !inv.revoked) items.push({ label: 'Revoke invite', danger: true, onClick: () => revoke(inv.id, inv.label) })
+          if (inv && inv.revoked) items.push({ label: 'Delete', onClick: () => remove(inv.id) })
           return (
-            <div class="invite-row" key={inv.id}>
-              <Avatar id={inv.id} name={inv.label} />
+            <div class="person-row" key={key}>
+              <Avatar id={peer?.id || inv!.id} name={name} />
               <div class="grow col tight">
-                <span class="ellipsis">
-                  {inv.label}
-                  {inv.name && inv.name !== inv.label ? <span class="muted"> · as {inv.name}</span> : null}
-                </span>
-                <span class={`caption tag-text ${status.c}`}>{status.t}</span>
+                <div class="row">
+                  <span class="ellipsis">{name}</span>
+                  {inv && inv.name && inv.name !== inv.label && <span class="caption muted ellipsis">as {inv.name}</span>}
+                  {peer?.role === 'host' && <span class="tag neutral">Host</span>}
+                  {peer?.cohost && <span class="tag warn">Co-host</span>}
+                  {peer?.chatOff && <span class="tag neutral">chat hidden</span>}
+                </div>
+                <div class="row caption">
+                  {peer ? (
+                    <>
+                      <span class={`tag ${status.c}`}>{status.t}</span>
+                      <span class={`ping ${pingClass(peer.rtt)}`}>{peer.rtt} ms</span>
+                      {peer.q && <span class="muted">{peer.q}</span>}
+                      {peer.device && <span class="muted ellipsis">{peer.device}</span>}
+                    </>
+                  ) : (
+                    <span class={`tag-text ${status.c}`}>{status.t}</span>
+                  )}
+                </div>
               </div>
-              {!inv.revoked && !inv.expired && has && (
-                <>
-                  {t?.state === 'up' && (
-                    <button class="btn btn-sm btn-ghost" onClick={() => doCopy(inv.id, 'net')} title="Copy internet link">
-                      <Icon name="copy" size={14} /> Link
-                    </button>
-                  )}
-                  {(t?.lan?.length || 0) > 0 && (
-                    <button class="btn btn-sm btn-ghost" onClick={() => doCopy(inv.id, 'lan')} title="Copy Wi-Fi link">
-                      Wi-Fi
-                    </button>
-                  )}
-                  <button class="btn btn-sm btn-ghost" onClick={() => setQrFor(inv)} title="Show a QR code to scan with a phone">
-                    QR
-                  </button>
-                </>
-              )}
-              {!inv.revoked && !has && (
-                <button class="btn btn-sm btn-ghost" onClick={() => regen(inv.id)} title="Links are shown once. Make a new one to copy it again.">
-                  New link
-                </button>
-              )}
-              {!inv.revoked ? (
-                <button class="icon-btn sm plain danger" onClick={() => revoke(inv.id, inv.label)} title="Revoke">
-                  <Icon name="x" size={16} />
-                </button>
-              ) : (
-                <button class="icon-btn sm plain" onClick={() => remove(inv.id)} title="Delete">
-                  <Icon name="trash" size={16} />
-                </button>
-              )}
+              <RowMenu items={items} />
             </div>
           )
         })}
       </div>
       {qrFor && <InviteQR label={qrFor.label} links={qrLinks(qrFor.id)} onClose={() => setQrFor(null)} />}
       <div class="caption muted">
-        One invite per person. The link carries a 128-bit key, locks to the first device that opens it, and every first join waits for you to
-        admit it. Forwarded links show up flagged in the lobby.
-      </div>
-    </div>
-  )
-}
-
-function Viewers() {
-  const list = S.peers.value
-  return (
-    <div class="card">
-      <div class="h18">Viewers · {list.length}</div>
-      <div class="divider-list">
-        {list.map((p) => {
-          const s = peerStatus(p)
-          return (
-            <div class="peer-row" key={p.id}>
-              <Avatar id={p.id} name={p.name} />
-              <div class="grow col tight">
-                <div class="row">
-                  <span class="ellipsis">{p.name}</span>
-                  {p.role === 'host' && <span class="tag neutral">Host</span>}
-                  {p.cohost && <span class="tag warn">Co-host</span>}
-                  {p.chatOff && <span class="tag neutral">chat hidden</span>}
-                </div>
-                <div class="row caption">
-                  <span class={`tag ${s.cls}`}>{s.text}</span>
-                  <span class={`ping ${pingClass(p.rtt)}`}>{p.rtt} ms</span>
-                  {p.jit > 50 && <span class="muted">±{p.jit}</span>}
-                  {p.q && <span class="muted">{p.q}</span>}
-                  {p.device && <span class="muted ellipsis">{p.device}</span>}
-                </div>
-              </div>
-              {p.role !== 'host' && (
-                <>
-                  <button
-                    class="btn btn-sm btn-ghost"
-                    onClick={() => socket.send({ t: 'host', op: 'chat_hide', sid: p.id, on: !p.chatOff })}
-                    title="Hidden viewers don't see chat messages and can't post. Reactions still work."
-                  >
-                    {p.chatOff ? 'Show chat' : 'Hide chat'}
-                  </button>
-                  <button
-                    class={`btn btn-sm ${p.cohost ? 'btn-primary' : 'btn-ghost'}`}
-                    onClick={() => socket.send({ t: 'host', op: 'cohost', sid: p.id, on: !p.cohost })}
-                    title="Co-hosts can play, pause, seek and start intermissions for everyone"
-                  >
-                    {p.cohost ? 'Co-host ✓' : 'Give control'}
-                  </button>
-                  <button
-                    class="icon-btn sm plain danger"
-                    onClick={() => confirm(`Remove ${p.name}?`) && socket.send({ t: 'host', op: 'kick', sid: p.id })}
-                    title="Remove"
-                  >
-                    <Icon name="x" size={16} />
-                  </button>
-                </>
-              )}
-            </div>
-          )
-        })}
+        One link per person. It locks to the first device that opens it, and every first join waits for you in the lobby. Forwarded links show up flagged.
       </div>
     </div>
   )
@@ -1037,8 +1055,8 @@ function RoomSettings() {
     ['reactions', 'Show reactions on screen', ''],
   ]
   return (
-    <div class="card">
-      <div class="h18">Room</div>
+    <div class="settings-section col">
+      <div class="section-title">Room</div>
       <label class="col tight">
         <span class="label dim">Room name</span>
         <input class="input" defaultValue={s.roomName} maxLength={40} onChange={(e) => set({ roomName: (e.target as HTMLInputElement).value })} />
@@ -1056,12 +1074,6 @@ function RoomSettings() {
         <span class="dim grow">Maximum guests</span>
         <input class="input num" type="number" min={1} max={50} value={s.maxGuests} onChange={(e) => set({ maxGuests: parseInt((e.target as HTMLInputElement).value) || 12 })} />
       </label>
-      <button
-        class="btn btn-danger"
-        onClick={() => confirm('End the room? Every invite link stops working and everyone is disconnected.') && socket.send({ t: 'host', op: 'end_room' })}
-      >
-        End room & revoke all links
-      </button>
     </div>
   )
 }

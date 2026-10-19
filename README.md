@@ -17,7 +17,7 @@ Watch videos together, perfectly in sync. FairPlay is one small program you run 
 - **Your language, your quality.** Tracks are named by language. The host picks audio, subtitles and quality for the room, and anyone can switch to their own. Choose 1080p HD, 720p SD or 480p data saver, or Auto, which gives a laptop 1080p and a phone 720p. The host's own player plays one fixed quality, since it streams from its own computer.
 - **Screen lock.** A lock button at the bottom right of the player. While it glows, play, pause, seeking and skipping are frozen, so a phone in a hand can't move the film for everyone; volume, chat and reactions keep working. Chat bubbles show up with each new message and with the controls, and fade after reading time, 5 to 12 seconds depending on the message's length; the text box appears when you move to the chat corner.
 - **Volume to 200%.** Like VLC: above 100% the sound is amplified in the browser, for quiet films and quiet laptops.
-- **Host controls.** A lobby, co-hosts, a playlist, kick, revoke, room lock, and the ping of every viewer.
+- **Host console.** Now showing, Library, People and Settings: the film and its transport in one card, every person in one list with status, ping and a row menu, and the room options in one place.
 - **Private by default.** Each person gets a personal invite link, the host admits every new device, and a bot shield protects the public link.
 - **Light.** One 8 MB binary that uses about 8 MB of memory.
 - **An event log of every showing.** Who was where on the timeline, second by second, every play, pause and seek, the encoder's progress, and what each player saw in its browser. When something stutters, `fairplay logs` says what went wrong.
@@ -58,11 +58,11 @@ fairplay
 That's all. FairPlay picks your Videos, Movies or Downloads folder, or creates `~/Videos`, and opens the host console in your browser. Then:
 
 1. Pick a video. It starts preparing right away, and playback can begin after a few seconds. To use another folder, press **Change folder**. FairPlay remembers your choice.
-2. Create an invite for each friend. The link is copied for you to send. For a phone in the same room, press **QR** and scan it with the phone's camera.
+2. Under **People**, invite each friend by name. The link is copied for you to send. For a phone in the same room, choose **Show QR code** from the person's menu and scan it with the phone's camera.
 3. When they open it, admit them from the lobby.
 4. Press play. Everyone starts on the same tick.
 
-The host link printed in the terminal works like a password, so keep it private. To stop, press **Stop FairPlay** in the host console, press Ctrl+C in the terminal, or run `fairplay stop` from any other terminal. Each one ends the room for everyone. Invites survive a restart, guests whose device was already admitted rejoin by themselves, and your host key changes on every start.
+The host link printed in the terminal works like a password, so keep it private. To stop, choose **Stop FairPlay** from the ⋯ menu in the host console, press Ctrl+C in the terminal, or run `fairplay stop` from any other terminal. Each one ends the room for everyone. Invites survive a restart, guests whose device was already admitted rejoin by themselves, and your host key changes on every start.
 
 `fairplay check` shows what FairPlay found on your computer, if something doesn't work.
 
@@ -112,7 +112,7 @@ On Linux with Intel or AMD graphics, videos are prepared on the GPU (the start-u
 | macOS | `~/Library/Caches/fairplay` |
 | Windows | `%LOCALAPPDATA%\fairplay` |
 
-The cache never grows past 40 GB, because the oldest prepared videos are removed first. Change the limit with `-cache-max <GB>`, where `0` means no limit. The host console's Storage card shows what is there and can clear it.
+The cache never grows past 40 GB, because the oldest prepared videos are removed first. Change the limit with `-cache-max <GB>`, where `0` means no limit. The Storage section under Settings in the host console shows what is there and can clear it.
 
 To see the space used:
 
