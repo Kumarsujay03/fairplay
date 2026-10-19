@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -142,6 +143,39 @@ func (s *Store) Get(ctx context.Context, code string) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
+// Warm prepares every emoji in the picker that isn't cached yet, one at a
+// time, so a reaction animates the moment it is sent instead of waiting for
+// its first download. It is a one-time job: later starts find them cached.
+// It returns the number prepared and stops when ctx is cancelled.
+func (s *Store) Warm(ctx context.Context) (int, error) {
+	var list []Entry
+	if err := json.Unmarshal(indexJSON, &list); err != nil {
+		return 0, err
+	}
+	done, fails := 0, 0
+	for _, e := range list {
+		if ctx.Err() != nil {
+			return done, ctx.Err()
+		}
+		if _, ok := Bundled(e.Code); ok {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(s.Dir, e.Code+".webp")); err == nil {
+			continue
+		}
+		if _, err := s.Get(ctx, e.Code); err != nil {
+			// Offline or blocked: give up quietly after a few, the emoji
+			// still work on demand.
+			if fails++; fails >= 5 && done == 0 {
+				return done, err
+			}
+			continue
+		}
+		done++
+	}
+	return done, nil
+}
+
 // Convert downloads the animated GIF for code from Google's emoji CDN and
 // writes a small looping animated WebP (96 px, 15 fps) to dst.
 func Convert(client *http.Client, ffmpeg, code, dst string) error {
@@ -167,11 +201,16 @@ func Convert(client *http.Client, ffmpeg, code, dst string) error {
 	tmp := dst + ".tmp"
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+	args := []string{"-hide_banner", "-loglevel", "error", "-y", "-threads", "1",
 		"-f", "gif", "-i", "pipe:0",
 		"-vf", "fps=15,scale=96:96:flags=lanczos",
 		"-c:v", "libwebp_anim", "-lossless", "0", "-q:v", "55", "-compression_level", "6", "-loop", "0", "-an",
-		"-f", "webp", tmp)
+		"-f", "webp", tmp}
+	// Lowest priority: preparing emoji must never slow the video down.
+	cmd := exec.CommandContext(ctx, ffmpeg, args...)
+	if nice, err := exec.LookPath("nice"); err == nil && runtime.GOOS != "windows" {
+		cmd = exec.CommandContext(ctx, nice, append([]string{"-n", "19", ffmpeg}, args...)...)
+	}
 	cmd.Stdin = bytes.NewReader(gif)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		os.Remove(tmp)

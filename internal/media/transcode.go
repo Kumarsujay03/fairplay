@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -207,7 +208,10 @@ func buildArgs(input string, info Info, enc Encoder, tonemap bool, versions stri
 		encoded = rungs[1:]
 	}
 
-	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-i", input}
+	// Half the CPU at most: the host usually watches on this same computer,
+	// and the browser needs cores to decode the picture smoothly.
+	threads := encodeThreads()
+	args := []string{"-hide_banner", "-nostdin", "-loglevel", "error", "-y", "-threads", fmt.Sprint(threads), "-i", input}
 	if len(encoded) > 0 {
 		// Video chain: optional deinterlace and HDR tonemap, square pixels, split.
 		var pre []string
@@ -231,7 +235,7 @@ func buildArgs(input string, info Info, enc Encoder, tonemap bool, versions stri
 				fc += fmt.Sprintf(";[s%d]scale='min(%d,iw)':-2:flags=bicubic[v%d]", i, r.Long, i)
 			}
 		}
-		args = append(args, "-filter_complex", fc)
+		args = append(args, "-filter_complex", fc, "-filter_complex_threads", fmt.Sprint(threads))
 	}
 	if copyTop {
 		args = append(args, "-map", "0:v:0")
@@ -261,6 +265,9 @@ func buildArgs(input string, info Info, enc Encoder, tonemap bool, versions stri
 			}
 		}
 		args = append(args, streamOpts(opts, i)...)
+		if soft {
+			args = append(args, fmt.Sprintf("-threads:v:%d", i), fmt.Sprint(max(2, threads/len(encoded))))
+		}
 		if copyTop {
 			// Keyframes exactly where the original has them, so all versions
 			// cut into the same 4-second segments and switching is seamless.
@@ -387,4 +394,10 @@ func fixMaster(path string, rungs []rung) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// encodeThreads is how many threads ffmpeg may use: half the logical CPUs,
+// at least 2.
+func encodeThreads() int {
+	return max(2, runtime.NumCPU()/2)
 }

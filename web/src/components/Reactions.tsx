@@ -60,18 +60,25 @@ export function Reactions() {
       // 1. Spring pop.
       const drift = (Math.random() * 2 - 1) * 40
       const rise = Math.max(160, Math.min(300, o.room))
+      // Each step has its own easing and the timeline itself is linear, so
+      // the hold really lasts: the emoji stays fully visible for about four
+      // seconds, long enough for its animation to play through, before it
+      // drifts up and fades.
+      const pop = 'cubic-bezier(.2,.9,.3,1.2)'
       const anim = wrap.animate(
         [
-          { transform: 'translate(-50%, -50%) scale(0.1)', opacity: 0, offset: 0 },
-          { transform: 'translate(-50%, -50%) scale(1.35)', opacity: 1, offset: 0.1 },
-          { transform: 'translate(-50%, -50%) scale(0.88)', opacity: 1, offset: 0.17 },
-          { transform: 'translate(-50%, -50%) scale(1.06)', opacity: 1, offset: 0.23 },
-          { transform: 'translate(-50%, -50%) scale(1)', opacity: 1, offset: 0.3 },
-          // 2. Hold while the emoji plays, then drift up and fade.
-          { transform: `translate(calc(-50% + ${drift * 0.25}px), calc(-50% - ${rise * 0.12}px)) scale(1)`, opacity: 1, offset: 0.55 },
+          { transform: 'translate(-50%, -50%) scale(0.1)', opacity: 0, offset: 0, easing: pop },
+          { transform: 'translate(-50%, -50%) scale(1.35)', opacity: 1, offset: 0.06, easing: 'ease-in-out' },
+          { transform: 'translate(-50%, -50%) scale(0.88)', opacity: 1, offset: 0.1, easing: 'ease-in-out' },
+          { transform: 'translate(-50%, -50%) scale(1.06)', opacity: 1, offset: 0.14, easing: 'ease-in-out' },
+          { transform: 'translate(-50%, -50%) scale(1)', opacity: 1, offset: 0.18, easing: 'ease-in-out' },
+          // Hold while the emoji plays, rising just a little.
+          { transform: `translate(calc(-50% + ${drift * 0.2}px), calc(-50% - ${rise * 0.1}px)) scale(1)`, opacity: 1, offset: 0.66, easing: 'ease-in' },
+          // Drift up, still visible, then fade at the very end.
+          { transform: `translate(calc(-50% + ${drift * 0.75}px), calc(-50% - ${rise * 0.75}px)) scale(0.85)`, opacity: 0.9, offset: 0.88, easing: 'ease-out' },
           { transform: `translate(calc(-50% + ${drift}px), calc(-50% - ${rise}px)) scale(0.7)`, opacity: 0, offset: 1 },
         ],
-        { duration: 4300, easing: 'cubic-bezier(.25,.8,.35,1)', fill: 'forwards' },
+        { duration: 5400, fill: 'forwards' },
       )
       anim.onfinish = () => {
         wrap.remove()

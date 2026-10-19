@@ -55,7 +55,7 @@ export function Peers({ onClose }: { onClose: () => void }) {
           return (
             <div class="peer-row" key={p.id}>
               <Avatar id={p.id} name={p.name} />
-              <div class="grow col tight">
+              <div class="grow col tight peer-info">
                 <div class="row">
                   <span class="ellipsis">{p.name}</span>
                   {p.id === me?.id && (
@@ -80,7 +80,7 @@ export function Peers({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
               {host && p.role !== 'host' && (
-                <div class="row">
+                <div class="row peer-actions">
                   <button
                     class="icon-btn sm plain"
                     title={p.chatOff ? 'Show chat to them again' : 'Hide chat from them'}

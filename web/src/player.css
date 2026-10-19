@@ -98,6 +98,13 @@
 .stack .label { white-space: nowrap; }
 .peers-panel { position: absolute; top: 72px; right: 32px; width: 340px; max-height: 70vh; overflow: auto; z-index: 8; padding: 16px; border-radius: var(--r-lg); background: rgba(13, 16, 24, 0.95); border: 1px solid var(--glass-line); box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; gap: 8px; backdrop-filter: blur(12px); }
 .peer-row, .invite-row, .queue-row, .lib-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
+/* Viewer rows: details beside the avatar, host actions on the right, or on
+   their own line below when the panel is too narrow for both. */
+.peer-row { flex-wrap: wrap; }
+.peer-info { flex: 1 1 150px; min-width: 0; }
+.peer-info .row { flex-wrap: wrap; gap: 6px; }
+.peer-info .tag, .peer-info .ping, .peer-info .muted { white-space: nowrap; }
+.peer-actions { flex: none; margin-left: auto; gap: 6px; }
 .lobby-toasts { position: absolute; top: 76px; left: 50%; transform: translateX(-50%); z-index: 9; display: flex; flex-direction: column; gap: 8px; width: min(520px, calc(100% - 32px)); }
 .lobby-toasts .lobby-entry { background: rgba(13, 16, 24, 0.95); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5); }
 .lobby-entry { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--r-md); border: 1px solid var(--border); background: var(--bg-elevated); }
