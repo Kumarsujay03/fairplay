@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.5 (2026-10-20)
 
 - New logo, a clapperboard with a coral bolt and the FAIRPLAY wordmark, on every page, in the dialogs and as the browser tab icon. The whole interface takes its colours from it: near-black and white neutrals, coral for the brand and primary actions. Amber stays for "behind", "paused" and warnings so status still reads apart, and destructive actions use a crimson
 - FairPlay's own dialogs replace the browser's pop-ups: ending the room, stopping FairPlay, stopping a video, revoking an invite, removing someone, freeing space and renaming yourself now open a themed dialog in the middle of the page. Escape or a click outside cancels, Enter confirms, destructive actions have a red button
