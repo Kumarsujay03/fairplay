@@ -27,7 +27,7 @@ function QRCode({ text, size = 240 }: { text: string; size?: number }) {
   return (
     <svg class="qr-box" width={size} height={size} viewBox={`${-q} ${-q} ${path.n + 2 * q} ${path.n + 2 * q}`} shape-rendering="crispEdges" role="img" aria-label="QR code">
       <rect x={-q} y={-q} width={path.n + 2 * q} height={path.n + 2 * q} fill="#fff" />
-      <path d={path.d} fill="#0b0d12" />
+      <path d={path.d} fill="#0a0a0a" />
     </svg>
   )
 }

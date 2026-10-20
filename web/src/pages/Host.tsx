@@ -5,6 +5,7 @@ import * as S from '../store'
 import { Icon, Logo } from '../components/Icons'
 import { LobbyEntry } from '../components/Lobby'
 import { InviteQR } from '../components/QR'
+import { ask } from '../components/Dialog'
 import { Avatar, peerStatus } from '../components/Peers'
 import { copy, fmtBytes, fmtTime, navigate, pingClass, qualityLabel } from '../util'
 
@@ -180,9 +181,11 @@ function Console() {
   const statusLive = st?.playing
   const pos = st ? (!st.playing || socket.clock.now() < st.anchor ? st.pos : st.pos + (socket.clock.now() - st.anchor) / 1000) : 0
 
-  const endRoom = () => confirm('End the room? Every invite link stops working and everyone is disconnected.') && socket.send({ t: 'host', op: 'end_room' })
+  const endRoom = async () =>
+    (await ask({ title: 'End the room?', message: 'Every invite link stops working and everyone is disconnected. FairPlay keeps running for new invites.', confirm: 'End room', danger: true })) &&
+    socket.send({ t: 'host', op: 'end_room' })
   const stopFairPlay = async () => {
-    if (!confirm('Stop FairPlay? The room ends for everyone and FairPlay closes on this computer. Start it again with: fairplay')) return
+    if (!(await ask({ title: 'Stop FairPlay?', message: 'The room ends for everyone and FairPlay closes on this computer. Start it again with: fairplay', confirm: 'Stop FairPlay', danger: true }))) return
     try {
       await post('/api/host/shutdown')
     } catch {}
@@ -198,7 +201,7 @@ function Console() {
     <div class="console">
       <header class="console-top">
         <div class="row brand">
-          <Logo size={28} />
+          <Logo size={34} />
           <span class="console-name">Host console</span>
           <VersionTag version={version} upd={upd} />
         </div>
@@ -227,11 +230,14 @@ function Console() {
         />
       </header>
 
-      <main class="console-body">
+      <main class="console-scroll">
+        <div class="console-body">
         {tab === 'show' && (
-          <>
-            <Banner cur={cur} pos={pos} />
-            <div class="console-cols">
+          <div class="show-grid">
+            <div class="slot slot-banner">
+              <Banner cur={cur} pos={pos} />
+            </div>
+            <div class="slot slot-lib">
               <Library
                 cur={cur}
                 items={items}
@@ -243,10 +249,14 @@ function Console() {
                   S.library.value = { ...r.status, ...S.library.value }
                 }}
               />
+            </div>
+            <div class="slot slot-people">
               <People tokens={tokens} setTokens={setTokens} compact onMore={() => setTab('people')} />
+            </div>
+            <div class="slot slot-room">
               <RoomSettings onShare={() => setTab('settings')} />
             </div>
-          </>
+          </div>
         )}
         {tab === 'people' && (
           <div class="console-cols two">
@@ -267,6 +277,7 @@ function Console() {
             </div>
           </div>
         )}
+        </div>
       </main>
 
       <footer class="console-foot">
@@ -283,7 +294,7 @@ function Console() {
 }
 
 /** A small "⋯" menu. Closes on a click anywhere else or on Escape. */
-function RowMenu({ items, label = 'Actions' }: { items: { label: string; hint?: string; danger?: boolean; onClick: () => void }[]; label?: string }) {
+function RowMenu({ items, label = 'Actions' }: { items: { label: string; hint?: string; danger?: boolean; onClick: () => unknown }[]; label?: string }) {
   const [open, setOpen] = useState(false)
   useEffect(() => {
     if (!open) return
@@ -362,7 +373,10 @@ function Banner({ cur, pos }: { cur: S.MediaStatus | null; pos: number }) {
                 <button
                   class="btn btn-glass btn-sm"
                   title="Stop the video for everyone and stop preparing it"
-                  onClick={() => confirm(`Stop “${m.name}” for everyone?`) && socket.send({ t: 'host', op: 'clear' })}
+                  onClick={async () =>
+                    (await ask({ title: 'Stop this video?', message: `“${m.name}” stops for everyone and stops preparing. You can pick it again from the library.`, confirm: 'Stop & clear', danger: true })) &&
+                    socket.send({ t: 'host', op: 'clear' })
+                  }
                 >
                   Stop &amp; clear
                 </button>
@@ -773,7 +787,7 @@ function Storage() {
   }, [])
   if (!info) return null
   const clear = async () => {
-    if (!confirm('Delete prepared videos to free space? The video playing now is kept. Others are prepared again when played.')) return
+    if (!(await ask({ title: 'Free up space?', message: 'Prepared videos are deleted. The one playing now is kept; the others are prepared again when played.', confirm: 'Delete', danger: true }))) return
     setBusy(true)
     try {
       const r = await post<StorageInfo & { freed: number }>('/api/host/storage/clear')
@@ -786,7 +800,7 @@ function Storage() {
   const pct = info.max > 0 ? Math.min(100, (info.bytes / info.max) * 100) : 0
   const others = info.items.filter((i) => !i.inUse)
   return (
-    <details class="settings-section">
+    <details class="settings-section" open>
       <summary class="section-title row">
         <span class="grow">Storage</span>
         <span class="caption muted">{fmtBytes(info.bytes)}</span>
@@ -929,7 +943,7 @@ function People({ tokens, setTokens, compact = false, onMore }: { tokens: Record
   }
 
   const revoke = async (id: string, label: string) => {
-    if (!confirm(`Revoke ${label}'s invite? They will be removed from the room.`)) return
+    if (!(await ask({ title: `Revoke ${label}'s invite?`, message: 'The link stops working and they are removed from the room.', confirm: 'Revoke', danger: true }))) return
     await post(`/api/host/invites/${id}/revoke`)
     S.invites.value = await get<S.InviteView[]>('/api/host/invites')
   }
@@ -1020,7 +1034,7 @@ function People({ tokens, setTokens, compact = false, onMore }: { tokens: Record
           const status = ps ? { t: ps.text, c: ps.cls } : inv ? inviteStatus(inv) : { t: '', c: 'neutral' }
           const has = inv ? !!tokens[inv.id] : false
           const live = inv && !inv.revoked && !inv.expired
-          const items: { label: string; hint?: string; danger?: boolean; onClick: () => void }[] = []
+          const items: { label: string; hint?: string; danger?: boolean; onClick: () => unknown }[] = []
           if (inv && live && has) {
             if (t?.state === 'up') items.push({ label: 'Copy internet link', onClick: () => doCopy(inv.id, 'net') })
             if ((t?.lan?.length || 0) > 0) items.push({ label: 'Copy Wi-Fi link', onClick: () => doCopy(inv.id, 'lan') })
@@ -1030,7 +1044,7 @@ function People({ tokens, setTokens, compact = false, onMore }: { tokens: Record
           if (peer && peer.role !== 'host') {
             items.push({ label: peer.chatOff ? 'Show chat' : 'Hide chat', hint: 'Hidden viewers see no messages and cannot post', onClick: () => socket.send({ t: 'host', op: 'chat_hide', sid: peer.id, on: !peer.chatOff }) })
             items.push({ label: peer.cohost ? 'Take back control' : 'Give control', hint: 'Co-hosts can play, pause, seek and start intermissions', onClick: () => socket.send({ t: 'host', op: 'cohost', sid: peer.id, on: !peer.cohost }) })
-            items.push({ label: 'Remove from room', danger: true, onClick: () => confirm(`Remove ${peer.name}?`) && socket.send({ t: 'host', op: 'kick', sid: peer.id }) })
+            items.push({ label: 'Remove from room', danger: true, onClick: async () => (await ask({ title: `Remove ${peer.name}?`, message: 'They are disconnected from the room. Their invite still works unless you revoke it.', confirm: 'Remove', danger: true })) && socket.send({ t: 'host', op: 'kick', sid: peer.id }) })
           }
           if (inv && !inv.revoked) items.push({ label: 'Revoke invite', danger: true, onClick: () => revoke(inv.id, inv.label) })
           if (inv && inv.revoked) items.push({ label: 'Delete', onClick: () => remove(inv.id) })

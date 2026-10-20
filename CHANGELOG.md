@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- New logo, a clapperboard with a coral bolt and the FAIRPLAY wordmark, on every page, in the dialogs and as the browser tab icon. The whole interface takes its colours from it: near-black and white neutrals, coral for the brand and primary actions. Amber stays for "behind", "paused" and warnings so status still reads apart, and destructive actions use a crimson
+- FairPlay's own dialogs replace the browser's pop-ups: ending the room, stopping FairPlay, stopping a video, revoking an invite, removing someone, freeing space and renaming yourself now open a themed dialog in the middle of the page. Escape or a click outside cancels, Enter confirms, destructive actions have a red button
+- Host console: the top bar and the footer stay put and only the middle scrolls. On the Show tab the banner spans the Library and People cards, and Room runs the full height on the right, so all three cards end on one line. On the People and Settings tabs the cards side by side share one height too, and Storage opens by default
+- No visible scrollbars on any page; lists and pages still scroll with the wheel, touch and keys
+- Fix: the newest chat bubble could be cut off at the bottom when the controls appeared and brought the older bubbles back. The list now stays pinned to the newest message
+- New screenshots in the README and docs
+
 ## 0.3.4 (2026-10-20)
 
 - The host console is redesigned, from a set of Figma concepts (file page "04 Host console concepts", concept B). A **banner** carries the film the room is showing: title, status, tracks for everyone as glass controls, and the transport that moves the global timer, like a player. Below it, three cards: **Library**, **People** and **Room**. The top bar has segmented tabs, Show, People and Settings, one status pill, Open player, and a ⋯ menu with Stop FairPlay and End room. **People** merges invites, viewers and the lobby into one list, one row per person with status, ping and quality and a row menu for the link, QR code, chat, control and removal. **Settings** gathers sharing, room options and storage. A quiet footer shows the encoder, Wi-Fi address, internet state and version. One accent for the primary action, green only for "live", red only on hover of destructive items

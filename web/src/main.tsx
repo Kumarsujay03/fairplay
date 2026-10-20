@@ -7,6 +7,7 @@ import { Join } from './pages/Join'
 import { Room } from './pages/Room'
 import { Host } from './pages/Host'
 import { Landing } from './pages/Landing'
+import { DialogHost } from './components/Dialog'
 
 function App() {
   const [path, setPath] = useState(location.pathname)
@@ -27,6 +28,7 @@ function App() {
   return (
     <>
       {page}
+      <DialogHost />
       {t && (
         <div class={`toast ${t.kind === 'error' ? 'error' : ''}`} role="status">
           {t.text}
