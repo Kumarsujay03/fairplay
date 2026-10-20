@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg">
+    <img src="docs/logo-light.svg" alt="FairPlay" width="240">
+  </picture>
+</p>
+
 # FairPlay
 
 [![CI](https://github.com/Kumarsujay03/fairplay/actions/workflows/ci.yml/badge.svg)](https://github.com/Kumarsujay03/fairplay/actions/workflows/ci.yml)

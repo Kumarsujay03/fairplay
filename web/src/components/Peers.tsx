@@ -1,4 +1,5 @@
 import * as S from '../store'
+import { ask, askText } from './Dialog'
 import { socket } from '../socket'
 import { Icon } from './Icons'
 import { colorFor, fmtGap, initial, pingClass } from '../util'
@@ -61,8 +62,8 @@ export function Peers({ onClose }: { onClose: () => void }) {
                   {p.id === me?.id && (
                     <button
                       class="caption link-btn"
-                      onClick={() => {
-                        const n = prompt('Your display name', p.name)?.trim()
+                      onClick={async () => {
+                        const n = await askText({ title: 'Your name in the room', label: 'Display name', value: p.name, maxLength: 24, confirm: 'Rename' })
                         if (n) socket.send({ t: 'rename', name: n })
                       }}
                     >
@@ -98,7 +99,10 @@ export function Peers({ onClose }: { onClose: () => void }) {
                   <button
                     class="icon-btn sm plain danger"
                     title="Remove from room"
-                    onClick={() => confirm(`Remove ${p.name} from the room?`) && socket.send({ t: 'host', op: 'kick', sid: p.id })}
+                    onClick={async () =>
+                      (await ask({ title: `Remove ${p.name}?`, message: 'They are disconnected from the room. Their invite still works unless you revoke it.', confirm: 'Remove', danger: true })) &&
+                      socket.send({ t: 'host', op: 'kick', sid: p.id })
+                    }
                   >
                     <Icon name="x" size={16} />
                   </button>

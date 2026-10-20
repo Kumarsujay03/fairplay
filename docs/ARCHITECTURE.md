@@ -185,7 +185,7 @@ Over the internet every viewer pulls their own stream, so the host's upload spee
 
 ## 10. Design
 
-The design was made in Figma before any code. The theme is dark cinema: a near-black canvas, a warm amber accent like projector light, green for live, and glass overlays on the video. Design tokens live in `web/src/styles.css` and match the Figma variables. Screens:
+The design was made in Figma before any code, and the colours come from the logo (a clapperboard with a coral bolt, traced into inline SVG in `web/src/logo.ts`): a near-black canvas, white text, the bolt's coral (`#f85d5b`) for the brand and primary actions, green for live, amber kept for "behind", "paused" and warnings, and crimson for destructive actions. Confirmations use FairPlay's own themed dialog (`web/src/components/Dialog.tsx`) instead of the browser's. Design tokens live in `web/src/styles.css`. Screens:
 
 | Live | Solo, behind the room |
 |---|---|

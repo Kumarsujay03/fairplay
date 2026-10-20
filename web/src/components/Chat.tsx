@@ -69,6 +69,14 @@ export function Chat({ compact = false, open = true, uiOn = true }: { compact?: 
     if (idle) setSeenBefore(msgs.length)
   }, [idle])
 
+  // While following, stay pinned to the newest message whenever the list
+  // changes height: older bubbles coming back with the controls, or the text
+  // box unfolding, must not leave the newest one cut off at the bottom.
+  useEffect(() => {
+    const el = list.current
+    if (el && following) el.scrollTop = el.scrollHeight
+  })
+
   const onScroll = () => {
     const el = list.current
     if (!el) return

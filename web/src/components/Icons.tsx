@@ -1,5 +1,6 @@
 // Stroke icons, same set as the Figma "Icons / 24" row.
 import type { JSX } from 'preact'
+import { BOLT_COLOR, MARK_BOLT, MARK_INK, MARK_VIEWBOX, WORD, WORD_VIEWBOX } from '../logo'
 
 const paths: Record<string, JSX.Element> = {
   play: <path d="M7 4.5v15l13-7.5z" fill="currentColor" stroke="none" />,
@@ -183,13 +184,29 @@ export function Icon({ name, size = 22, class: cls }: { name: keyof typeof paths
   )
 }
 
-export function Logo({ size = 32 }: { size?: number }) {
+/** The FairPlay logo: clapperboard mark and wordmark. `size` is the mark's height. */
+export function Logo({ size = 44, word = true }: { size?: number; word?: boolean }) {
+  const [, , ww, wh] = WORD_VIEWBOX.split(' ').map(Number)
+  const wordH = Math.round(size * 0.4)
   return (
-    <span class="logo">
-      <span class="logo-mark" style={{ width: size, height: size }}>
-        <Icon name="play" size={size * 0.55} />
-      </span>
-      <span class="logo-text">FairPlay</span>
+    <span class="logo" role="img" aria-label="FairPlay">
+      <LogoMark size={size} />
+      {word && (
+        <svg class="logo-word" viewBox={WORD_VIEWBOX} height={wordH} width={Math.round((wordH * ww) / wh)} aria-hidden="true">
+          <path fill="currentColor" fill-rule="evenodd" d={WORD} />
+        </svg>
+      )}
     </span>
+  )
+}
+
+/** Just the clapperboard and its bolt. */
+export function LogoMark({ size = 32 }: { size?: number }) {
+  const [, , mw, mh] = MARK_VIEWBOX.split(' ').map(Number)
+  return (
+    <svg class="logo-mark" viewBox={MARK_VIEWBOX} height={size} width={Math.round((size * mw) / mh)} aria-hidden="true">
+      <path fill="currentColor" fill-rule="evenodd" d={MARK_INK} />
+      <path fill={BOLT_COLOR} d={MARK_BOLT} />
+    </svg>
   )
 }
