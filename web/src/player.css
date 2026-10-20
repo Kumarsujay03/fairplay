@@ -359,7 +359,7 @@ video::cue { background: rgba(0, 0, 0, 0.65); color: #fff; font-family: var(--fo
 
 /* Console layout pieces */
 .menu-wrap { position: relative; flex: none; }
-.dropdown { position: absolute; right: 0; top: calc(100% + 6px); min-width: 240px; padding: 6px; border-radius: 12px; background: var(--bg-elevated); border: 1px solid var(--border); box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5); z-index: 30; display: flex; flex-direction: column; animation: pop-in 0.12s ease-out; }
+.dropdown { position: fixed; overflow-y: auto; min-width: 240px; padding: 6px; border-radius: 12px; background: var(--bg-elevated); border: 1px solid var(--border); box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5); z-index: 30; display: flex; flex-direction: column; animation: pop-in 0.12s ease-out; }
 .dropdown-item { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; padding: 8px 10px; border-radius: 8px; text-align: left; font-size: 14px; line-height: 20px; color: var(--text); }
 .dropdown-item:hover { background: rgba(255, 255, 255, 0.06); }
 .dropdown-item.danger { color: var(--danger); }

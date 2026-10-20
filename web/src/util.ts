@@ -15,7 +15,8 @@ export function fmtGap(sec: number): string {
   return fmtTime(sec)
 }
 
-const palette = ['#D99A1E', '#2ED573', '#FF7A59', '#5B9DFF', '#C77DFF', '#00C2B8', '#FF5C8A', '#A7AEC0']
+// Avatar colours from the logo: coral tints, whites and greys, all readable with dark initials.
+const palette = ['#F85D5B', '#FF8A85', '#F5F5F5', '#E07B78', '#BDBDBD', '#FFB3AE', '#9E9E9E', '#D9D9D9']
 
 export function colorFor(id: string): string {
   let h = 0
