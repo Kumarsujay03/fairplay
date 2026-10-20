@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.7 (2026-10-20)
+
+- **Invite again** in the menu of a revoked or expired invite: the same person gets a fresh link, valid 24 hours and copied for you to send, without retyping their name. The old link stays dead, and the new one locks to the first device that opens it, as any invite does
+
 ## 0.3.6 (2026-10-20)
 
 - Avatars take their colours from the logo: coral tints, whites and greys, in place of the old amber, green, blue and purple

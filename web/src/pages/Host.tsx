@@ -961,6 +961,21 @@ function People({ tokens, setTokens, compact = false, onMore }: { tokens: Record
     S.showToast('New link made. The old one no longer works.')
   }
 
+  // A revoked or expired invite comes back with a fresh link for the same
+  // person: valid 24 h, not bound to any device yet; the old link stays dead.
+  const reinvite = async (inv: S.InviteView) => {
+    try {
+      const r = await post<{ token: string }>(`/api/host/invites/${inv.id}/regen`)
+      saveToken(inv.id, r.token)
+      setTokens(loadTokens())
+      S.invites.value = await get<S.InviteView[]>('/api/host/invites')
+      const link = `${base(t?.state === 'up' ? 'net' : 'lan')}/j/${inv.id}#t=${r.token}`
+      S.showToast((await copy(link)) ? `New invite for ${inv.label} copied` : `New invite for ${inv.label} is ready`)
+    } catch (err) {
+      S.showToast((err as ApiError).message, 'error')
+    }
+  }
+
   const revoke = async (id: string, label: string) => {
     if (!(await ask({ title: `Revoke ${label}'s invite?`, message: 'The link stops working and they are removed from the room.', confirm: 'Revoke', danger: true }))) return
     await post(`/api/host/invites/${id}/revoke`)
@@ -1066,6 +1081,7 @@ function People({ tokens, setTokens, compact = false, onMore }: { tokens: Record
             items.push({ label: 'Remove from room', danger: true, onClick: async () => (await ask({ title: `Remove ${peer.name}?`, message: 'They are disconnected from the room. Their invite still works unless you revoke it.', confirm: 'Remove', danger: true })) && socket.send({ t: 'host', op: 'kick', sid: peer.id }) })
           }
           if (inv && !inv.revoked) items.push({ label: 'Revoke invite', danger: true, onClick: () => revoke(inv.id, inv.label) })
+          if (inv && (inv.revoked || inv.expired)) items.unshift({ label: 'Invite again', hint: 'A new link for the same person, valid 24 h. The old link stays dead.', onClick: () => reinvite(inv) })
           if (inv && inv.revoked) items.push({ label: 'Delete', onClick: () => remove(inv.id) })
           return (
             <div class="person-row" key={key}>
