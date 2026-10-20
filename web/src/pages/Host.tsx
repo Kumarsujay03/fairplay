@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks'
+import { useEffect, useRef, useState } from 'preact/hooks'
 import { ApiError, del, get, me, post, proof } from '../api'
 import { socket } from '../socket'
 import * as S from '../store'
@@ -296,25 +296,44 @@ function Console() {
 /** A small "⋯" menu. Closes on a click anywhere else or on Escape. */
 function RowMenu({ items, label = 'Actions' }: { items: { label: string; hint?: string; danger?: boolean; onClick: () => unknown }[]; label?: string }) {
   const [open, setOpen] = useState(false)
+  // The menu floats above the page (fixed position), so a card edge or the
+  // scrolling area never cuts it off; it opens upward when there is no room below.
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number; maxHeight: number }>({ right: 0, maxHeight: 400 })
+  const btn = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     if (!open) return
     const close = () => setOpen(false)
     const key = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false)
     addEventListener('click', close)
     addEventListener('keydown', key)
+    addEventListener('resize', close)
+    addEventListener('scroll', close, true)
     return () => {
       removeEventListener('click', close)
       removeEventListener('keydown', key)
+      removeEventListener('resize', close)
+      removeEventListener('scroll', close, true)
     }
   }, [open])
+  const toggle = () => {
+    if (open) return setOpen(false)
+    const r = btn.current!.getBoundingClientRect()
+    const need = items.reduce((h, it) => h + (it.hint ? 58 : 38), 14)
+    const below = innerHeight - r.bottom - 12
+    const above = r.top - 12
+    const right = Math.max(8, innerWidth - r.right)
+    if (below >= need || below >= above) setPos({ top: r.bottom + 6, right, maxHeight: below })
+    else setPos({ bottom: innerHeight - r.top + 6, right, maxHeight: above })
+    setOpen(true)
+  }
   if (!items.length) return null
   return (
     <div class="menu-wrap" onClick={(e) => e.stopPropagation()}>
-      <button class={`icon-btn sm plain ${open ? 'active' : ''}`} onClick={() => setOpen(!open)} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open}>
+      <button ref={btn} class={`icon-btn sm plain ${open ? 'active' : ''}`} onClick={toggle} aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open}>
         <Icon name="more" size={18} />
       </button>
       {open && (
-        <div class="dropdown" role="menu">
+        <div class="dropdown" role="menu" style={{ top: pos.top, bottom: pos.bottom, right: pos.right, maxHeight: pos.maxHeight }}>
           {items.map((it) => (
             <button
               key={it.label}

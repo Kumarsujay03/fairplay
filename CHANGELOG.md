@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.6 (2026-10-20)
+
+- Avatars take their colours from the logo: coral tints, whites and greys, in place of the old amber, green, blue and purple
+- Fix: a person's ⋯ menu could be cut off by the scrolling area, so only "Copy internet link" showed and the Wi-Fi link, QR code and revoke options were hidden. The menu now floats above the page, opens upward when there is no room below, and closes when the page scrolls
+
 ## 0.3.5 (2026-10-20)
 
 - New logo, a clapperboard with a coral bolt and the FAIRPLAY wordmark, on every page, in the dialogs and as the browser tab icon. The whole interface takes its colours from it: near-black and white neutrals, coral for the brand and primary actions. Amber stays for "behind", "paused" and warnings so status still reads apart, and destructive actions use a crimson
