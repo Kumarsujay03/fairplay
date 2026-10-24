@@ -458,7 +458,7 @@ export function Player() {
 
   // Auto-hide controls while playing
   useEffect(() => {
-    if (!showUi || paused || menu || peersOpen || locked) return
+    if (!showUi || paused || menu || peersOpen) return
     const t = setTimeout(() => setShowUi(false), 3000)
     return () => clearTimeout(t)
   }, [showUi, paused, menu, peersOpen, cur > 0])
@@ -720,7 +720,7 @@ export function Player() {
   return (
     <div
       ref={wrap}
-      class={`player ${showUi || paused || locked ? 'ui-on' : 'ui-off'} ${locked ? 'locked' : ''} ${compact ? 'compact' : ''} ${chatOpen ? 'chat-on' : ''}`}
+      class={`player ${showUi || paused ? 'ui-on' : 'ui-off'} ${locked ? 'locked' : ''} ${compact ? 'compact' : ''} ${chatOpen ? 'chat-on' : ''}`}
       onMouseMove={() => {
         // Phones send a fake mouse move with every tap; the tap itself decides.
         if (performance.now() - lastTouch.current > 800) setShowUi(true)
@@ -742,7 +742,8 @@ export function Player() {
           // plays/pauses, except for the host, whose click would pause the
           // whole room: the host uses the button or the space bar.
           onClick={() => {
-            if (locked) return // the picture is locked; the controls still work
+            // Locked: a tap only shows or hides the controls (to reach Unlock), never pauses.
+            if (locked) return setShowUi((on) => !on)
             if (soundOff) return unmute()
             if (compact || touch || canControl || performance.now() - lastTouch.current < 800) setShowUi((on) => !on)
             else togglePlay()
@@ -808,7 +809,7 @@ export function Player() {
         {/* Chat */}
         {!compact && (
           <div class="chat-dock">
-            <Chat open={chatOpen} uiOn={showUi || paused || locked} />
+            <Chat open={chatOpen} uiOn={showUi || paused} />
           </div>
         )}
 
