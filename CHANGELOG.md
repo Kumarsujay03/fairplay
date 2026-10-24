@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.8 (2026-10-24)
+
+- Fix: with the screen lock on, the controls stayed on screen for good instead of hiding after a few seconds. They now hide as usual and come back when the pointer moves or the picture is tapped; while locked, a tap only shows or hides the controls, so Unlock is always one tap away and the film never pauses
+
 ## 0.3.7 (2026-10-20)
 
 - **Invite again** in the menu of a revoked or expired invite: the same person gets a fresh link, valid 24 hours and copied for you to send, without retyping their name. The old link stays dead, and the new one locks to the first device that opens it, as any invite does
